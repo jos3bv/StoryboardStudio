@@ -1,46 +1,25 @@
-# Storyboard Studio — prototipo Android 0.1.0
+# Storyboard Studio 0.2.0
 
-Proyecto inicial Android para Samsung Galaxy Tab S6 Lite y S Pen. Incluye un flujo de compilación automática en GitHub Actions para generar el APK sin instalar Android Studio en el PC.
+Aplicación Android nativa para tablets en orientación horizontal, compatible con Samsung Galaxy Tab S6 Lite y S Pen.
 
-## Funciones incluidas en esta primera base
+## Cambios principales de 0.2.0
+- Timeline horizontal con regla de tiempo.
+- Duración real por plano, visible en cada bloque.
+- Ajuste de duración arrastrando el borde derecho de cada bloque.
+- Ajuste fino mediante botones de +/- 0,5 s y cuadro de duración.
+- Reordenamiento de planos arrastrando la zona izquierda del bloque.
+- Navegación anterior/siguiente y selección directa de planos.
+- Pista de audio con forma de onda generada al decodificar el audio.
+- Playhead sincronizado con la reproducción y búsqueda tocando la regla o la pista de audio.
+- Zoom de timeline y centrado del cabezal.
+- Orientación horizontal en ambos sentidos (`sensorLandscape`).
 
-- Interfaz horizontal.
-- Lienzo 16:9 (1920 × 1080) sobre fondo blanco.
-- Dibujo con S Pen y lectura de presión cuando el dispositivo la entrega.
-- Dibujo con dedo como alternativa.
-- Pincel, selector de tres colores, borrador, tamaño de pincel, deshacer y limpiar con confirmación.
-- Viñetas independientes, selección, creación y duplicación.
-- Anotaciones de texto simples.
-- Importación y reproducción/pausa de audio mediante selector de archivos Android.
-- Guardado de imágenes PNG por viñeta y exportación PDF multipágina.
+## Compilar
+El proyecto utiliza Android Gradle Plugin 8.7.3, Kotlin 2.0.21, JDK 17 y compileSdk 35.
 
-## Generar el APK automáticamente (sin Android Studio)
+Desde GitHub Actions se puede ejecutar `Build Storyboard Studio APK` y descargar el artefacto `StoryboardStudio-APK`.
 
-1. Entra en https://github.com/ e inicia sesión o crea una cuenta.
-2. Crea un repositorio nuevo llamado `StoryboardStudio`. Puede ser **Private**.
-3. En el repositorio, pulsa **Add file → Upload files**.
-4. Descomprime el ZIP de este proyecto en tu PC. Sube el contenido de la carpeta `StoryboardStudio` (incluida la carpeta oculta `.github`) a la raíz del repositorio. No subas una carpeta `StoryboardStudio` dentro de otra.
-5. Pulsa **Commit changes**.
-6. Abre la pestaña **Actions** del repositorio. Si GitHub pregunta si deseas habilitar workflows, confirma.
-7. Selecciona **Build Storyboard Studio APK** en la lista de workflows y pulsa **Run workflow** si no comenzó automáticamente al subir los archivos.
-8. Espera a que el trabajo termine con un visto bueno verde. Abre esa ejecución y baja hasta **Artifacts**.
-9. Descarga `StoryboardStudio-debug-apk.zip` y descomprímelo. Dentro estará `app-debug.apk`.
-10. Transfiere `app-debug.apk` a la tablet, ábrelo desde **Mis archivos** y sigue las instrucciones de instalación de Android.
-
-La compilación usa Java 17, Gradle 8.9 y Android SDK 35 en los servidores de GitHub. El APK generado es una compilación de depuración para instalación y pruebas, no una versión firmada para publicar en Google Play.
-
-## Abrir y compilar localmente (opcional)
-
-1. Instala Android Studio.
-2. Abre esta carpeta desde **Open**.
-3. Permite que Gradle sincronice y descarga Android SDK Platform 35 si lo solicita.
-4. Ejecuta **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
-
-## Compatibilidad
-
-- `minSdk 23`, `targetSdk 28`, `compileSdk 35`.
-- La familia Galaxy Tab S6 Lite tiene distintas generaciones. La lectura de presión depende del modelo, firmware y S Pen; debe validarse en la tablet concreta.
-
-## Funciones pendientes
-
-Esta es una primera base funcional, no la versión final. Todavía faltan capas editables reales con visibilidad y opacidad, miniaturas dibujadas en la timeline, edición multipista con clips y forma de onda, duraciones ajustables, sincronización de audio, guardado/reapertura de proyectos editables, exportación MP4/animática y rechazo avanzado de palma. El MP3 seleccionado se reproduce durante la sesión, pero todavía no se copia dentro del paquete del proyecto.
+## Limitaciones de esta versión
+- La forma de onda se calcula al importar el audio. Si un códec del dispositivo no permite decodificar el archivo, el audio puede seguir reproduciéndose, pero la forma de onda podría quedar vacía.
+- El proyecto guarda los dibujos exportados y metadatos de duración; todavía no implementa la reapertura completa de un proyecto editable.
+- La exportación MP4/animática aún no está incluida.
