@@ -551,22 +551,6 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_IMAGE)
     }
 
-    @Deprecated("Deprecated by Android but compatible with the project's API level")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_IMAGE && resultCode == RESULT_OK) {
-            val uri = data?.data ?: return
-            try {
-                contentResolver.openInputStream(uri).use { stream ->
-                    val bitmap = BitmapFactory.decodeStream(stream) ?: throw IllegalArgumentException("Formato de imagen no compatible")
-                    drawing.addImportedImage(bitmap)
-                    scheduleAutosave()
-                    Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) { Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show() }
-        }
-    }
-
     private fun simpleSeekListener(onChanged: () -> Unit) =
         object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChanged()
@@ -589,6 +573,19 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
         when (requestCode) {
+            REQUEST_IMAGE -> {
+                try {
+                    contentResolver.openInputStream(uri).use { stream ->
+                        val bitmap = BitmapFactory.decodeStream(stream)
+                            ?: throw IllegalArgumentException("Formato de imagen no compatible")
+                        drawing.addImportedImage(bitmap)
+                        scheduleAutosave()
+                        Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
             101 -> {
                 try {
                     if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {

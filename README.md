@@ -1,4 +1,4 @@
-# Storyboard Studio 0.8.0
+# Storyboard Studio 0.8.1
 
 Actualización de Storyboard Studio para Android.
 
@@ -11,3 +11,6 @@ Actualización de Storyboard Studio para Android.
 
 ## Compilación
 El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.
+
+
+Corrección 0.8.1: se consolidó el manejo de resultados de selección de archivos en un único onActivityResult para evitar la declaración duplicada que impedía compilar. La importación de imágenes, audio y sesiones se procesa desde ese callback.
