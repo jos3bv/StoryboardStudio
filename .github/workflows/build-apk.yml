@@ -1,4 +1,3 @@
-
 name: Build Storyboard Studio APK
 
 on:
@@ -35,14 +34,11 @@ jobs:
       - name: Install Android SDK components
         run: |
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)
-
           if [ -z "$SDKMANAGER" ]; then
             echo "Android SDK Manager not found"
             exit 1
           fi
-
           yes | "$SDKMANAGER" --licenses || true
-
           "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
