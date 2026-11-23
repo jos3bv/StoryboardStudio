@@ -1,13 +1,23 @@
-# Storyboard Studio 0.8.2
+# Storyboard Studio 0.9.0
 
-Actualización conservadora de interfaz basada en el esquema de distribución proporcionado.
+Rediseño de interfaz basado en las referencias visuales de BV’StoryboardStudio.
 
-## Cambios
-- Barra superior con Archivo, Guardar y título editable del proyecto.
-- Panel izquierdo reorganizado para color, importación de imágenes, tamaño, opacidad y herramientas.
-- Acceso visible para activar/desactivar sensibilidad a la presión.
-- Panel derecho para información del plano, audio y exportaciones.
-- Barra inferior reorganizada: gestión de tomas, reproducción y zoom.
-- Paneles laterales desplazables para evitar que los controles queden fuera de pantalla.
+## Cambios de interfaz
+- Barra superior con Archivo, Guardar y marca a la derecha.
+- Panel izquierdo con selector cromático permanente, siete colores recientes y escala de grises.
+- Dos deslizadores verticales permanentes: tamaño y opacidad.
+- Herramientas en una cuadrícula de tres columnas por dos filas.
+- Exportación PNG del plano, PNG de todos los planos y PDF completo.
+- Área central ampliada con controles de deshacer, rehacer y centrar vista.
+- Timeline reorganizada con gestión de planos a la izquierda, reproducción centrada y zoom a la derecha.
+- Bloques de planos con nombre y duración; plano seleccionado en azul.
+- Pista de audio verde con acceso directo para cargar audio.
+- Eliminación del panel derecho.
 
-Se conserva la lógica de dibujo, sesiones, importación, exportación, audio y timeline de la versión 0.8.1.
+## Compatibilidad
+Se conserva el motor de dibujo, el uso del S Pen, importación de imágenes, sesiones JSON, guardado automático, audio, navegación, reproducción y exportación.
+
+## Compilación
+El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.
+
+Versión: 0.9.0 (versionCode 11).
