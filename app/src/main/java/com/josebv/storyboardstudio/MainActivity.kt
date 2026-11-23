@@ -108,6 +108,11 @@ class MainActivity : Activity() {
     }
 
     private fun buildInterface() {
+        // Initialize the drawing surface before any brush controls query its settings.
+        drawing = DrawingView(this).apply {
+            onChanged = { scheduleAutosave() }
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(29, 33, 39))
@@ -188,9 +193,6 @@ class MainActivity : Activity() {
         addButtonVertical(tools, "⌂ Vista") { drawing.resetViewport() }
         work.addView(tools, LinearLayout.LayoutParams(dp(92), -1))
 
-        drawing = DrawingView(this).apply {
-            onChanged = { scheduleAutosave() }
-        }
         work.addView(drawing, LinearLayout.LayoutParams(0, -1, 1f).apply {
             setMargins(dp(5), 0, dp(5), 0)
         })
