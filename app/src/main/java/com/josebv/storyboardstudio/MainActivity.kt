@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var durationLabel: TextView
     private lateinit var playPauseButton: Button
+    private var paletteDialog: AlertDialog? = null
     private var mediaPlayer: MediaPlayer? = null
     private var sequencePlaying = false
     private var sequenceStartUptime = 0L
@@ -142,7 +143,43 @@ class MainActivity : Activity() {
         addToolLabel(tools, "DIBUJO")
         addButtonVertical(tools, "−") { drawing.changeBrush(-2f) }
         addButtonVertical(tools, "＋") { drawing.changeBrush(2f) }
-        addButtonVertical(tools, "Pincel…") { showBrushSettings() }
+        addButtonVertical(tools, "Color…") { showBrushColorPalette() }
+        addToolLabel(tools, "TAMAÑO")
+        val brushSizeValue = TextView(this).apply {
+            text = "${drawing.brushSize().toInt()}"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+        }
+        val brushSizeControl = SeekBar(this).apply {
+            max = 39
+            progress = (drawing.brushSize() - 1f).toInt().coerceIn(0, 39)
+            setOnSeekBarChangeListener(simpleSeekListener {
+                drawing.configureBrush(progress + 1f, drawing.brushOpacity() * 255 / 100, drawing.pressureEnabled())
+                brushSizeValue.text = "${progress + 1}"
+                scheduleAutosave()
+            })
+        }
+        tools.addView(brushSizeValue)
+        tools.addView(brushSizeControl, LinearLayout.LayoutParams(-1, dp(32)))
+        addToolLabel(tools, "OPACIDAD")
+        val brushOpacityValue = TextView(this).apply {
+            text = "${drawing.brushOpacity()}%"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+        }
+        val brushOpacityControl = SeekBar(this).apply {
+            max = 100
+            progress = drawing.brushOpacity()
+            setOnSeekBarChangeListener(simpleSeekListener {
+                drawing.configureBrush(drawing.brushSize(), progress * 255 / 100, drawing.pressureEnabled())
+                brushOpacityValue.text = "${progress}%"
+                scheduleAutosave()
+            })
+        }
+        tools.addView(brushOpacityValue)
+        tools.addView(brushOpacityControl, LinearLayout.LayoutParams(-1, dp(32)))
         addButtonVertical(tools, "✎") { drawing.setEraser(false) }
         addButtonVertical(tools, "⌫") { drawing.setEraser(true) }
         addButtonVertical(tools, "↶") { drawing.undo() }
@@ -485,45 +522,50 @@ class MainActivity : Activity() {
             }.show()
     }
 
-    private fun showBrushSettings() {
+    private fun showBrushColorPalette() {
+        val colors = listOf(
+            "Negro" to Color.BLACK, "Gris" to Color.GRAY,
+            "Blanco" to Color.WHITE, "Rojo" to Color.rgb(220, 55, 55),
+            "Naranja" to Color.rgb(245, 140, 45), "Amarillo" to Color.rgb(245, 210, 55),
+            "Verde" to Color.rgb(65, 175, 95), "Cian" to Color.rgb(45, 190, 205),
+            "Azul" to Color.rgb(55, 115, 225), "Violeta" to Color.rgb(145, 85, 205),
+            "Rosa" to Color.rgb(230, 105, 160), "Marrón" to Color.rgb(135, 85, 55)
+        )
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(10), dp(22), dp(4))
+            setPadding(dp(14), dp(10), dp(14), dp(10))
         }
-        val sizeLabel = TextView(this).apply { textSize = 15f; setTextColor(Color.WHITE) }
-        val sizeSeek = SeekBar(this).apply { max = 39; progress = (drawing.brushSize() - 1f).toInt().coerceIn(0, 39) }
-        val opacityLabel = TextView(this).apply { textSize = 15f; setTextColor(Color.WHITE) }
-        val opacitySeek = SeekBar(this).apply { max = 100; progress = drawing.brushOpacity() }
-        val pressureCheck = CheckBox(this).apply {
-            text = "Usar sensibilidad a la presión del S Pen"
-            isChecked = drawing.pressureEnabled()
-            setTextColor(Color.WHITE)
-        }
-        fun updateLabels() {
-            sizeLabel.text = "Tamaño: ${sizeSeek.progress + 1}"
-            opacityLabel.text = "Opacidad: ${opacitySeek.progress}%"
-        }
-        sizeSeek.setOnSeekBarChangeListener(simpleSeekListener { updateLabels() })
-        opacitySeek.setOnSeekBarChangeListener(simpleSeekListener { updateLabels() })
-        updateLabels()
-        content.addView(sizeLabel)
-        content.addView(sizeSeek)
-        content.addView(opacityLabel)
-        content.addView(opacitySeek)
-        content.addView(pressureCheck)
-        AlertDialog.Builder(this)
-            .setTitle("Configuración del pincel")
-            .setView(content)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Aplicar") { _, _ ->
-                drawing.configureBrush(
-                    (sizeSeek.progress + 1).toFloat(),
-                    (opacitySeek.progress * 255 / 100),
-                    pressureCheck.isChecked
-                )
-                scheduleAutosave()
+        colors.chunked(4).forEach { rowColors ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
             }
-            .show()
+            rowColors.forEach { (name, color) ->
+                val swatch = Button(this).apply {
+                    text = "●\\n$name"
+                    textSize = 12f
+                    isAllCaps = false
+                    val luminance = 0.299f * Color.red(color) + 0.587f * Color.green(color) + 0.114f * Color.blue(color)
+                    setTextColor(if (luminance < 128f) Color.WHITE else Color.BLACK)
+                    setBackgroundTintList(android.content.res.ColorStateList.valueOf(color))
+                    setOnClickListener {
+                        drawing.setColor(color)
+                        scheduleAutosave()
+                        paletteDialog?.dismiss()
+                    }
+                }
+                row.addView(swatch, LinearLayout.LayoutParams(0, dp(66), 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                })
+            }
+            content.addView(row)
+        }
+        paletteDialog = AlertDialog.Builder(this)
+            .setTitle("Color del pincel")
+            .setView(content)
+            .setNegativeButton("Cerrar", null)
+            .create()
+        paletteDialog?.show()
     }
 
     private fun simpleSeekListener(onChanged: () -> Unit) =
@@ -1830,6 +1872,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun toJson(): JSONObject {
         val root = JSONObject()
         root.put("brushSize", brush.toDouble())
+        root.put("brushColor", color)
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
@@ -1867,6 +1910,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear()
         notes.clear()
         brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 40f)
+        color = root.optInt("brushColor", Color.BLACK)
         brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
         val array = root.optJSONArray("frames") ?: JSONArray()
