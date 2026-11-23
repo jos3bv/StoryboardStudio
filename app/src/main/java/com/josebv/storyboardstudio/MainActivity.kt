@@ -42,8 +42,13 @@ class MainActivity : Activity() {
     private var sequencePlaying = false
     private var sequenceStartUptime = 0L
     private var sequenceStartPosition = 0
-    private val sessionFile by lazy { File(filesDir, "storyboardstudio/session.json") }
-    private val sessionsDirectory by lazy { File(filesDir, "storyboardstudio/sessions") }
+    private val appStorageDirectory by lazy {
+        File(getExternalFilesDir(null) ?: filesDir, "StoryboardStudio")
+    }
+    private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.json") }
+    private val sessionsDirectory by lazy { File(appStorageDirectory, "Sessions") }
+    private val exportsDirectory by lazy { File(appStorageDirectory, "Exports/PNG") }
+    private val pdfDirectory by lazy { File(appStorageDirectory, "Exports/PDF") }
     private var restoringSession = false
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
@@ -91,6 +96,8 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         buildInterface()
+        prepareStorageFolders()
+        migratePreviousStorage()
         loadSession()
     }
 
@@ -98,12 +105,13 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(29, 33, 39))
+            setPadding(dp(8), dp(6), dp(8), dp(8))
         }
 
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 3, 8, 3)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             setBackgroundColor(Color.rgb(23, 26, 31))
         }
         val title = TextView(this).apply {
@@ -112,46 +120,42 @@ class MainActivity : Activity() {
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
         }
-        top.addView(title, LinearLayout.LayoutParams(0, 44, 1f))
-        addButton(top, "＋") { addFrame() }
-        addButton(top, "▣") { duplicateFrame() }
-        addButton(top, "✕") { deleteFrame() }
-        addButton(top, "◷") { editDuration() }
-        addButton(top, "♫") { chooseAudio() }
-        addButton(top, "⌂") { drawing.resetViewport() }
-        addButton(top, "▤") { showSessionDialog() }
+        top.addView(title, LinearLayout.LayoutParams(0, dp(50), 1f))
+        addButton(top, "Archivo") { showSessionDialog() }
         addButton(top, "💾") { saveProject() }
         root.addView(top)
 
         val work = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(8, 5, 8, 4)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
 
         val tools = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(2, 2, 6, 2)
+            setPadding(dp(5), dp(6), dp(8), dp(6))
         }
         addToolLabel(tools, "DIBUJO")
-        addButtonVertical(tools, "− Pincel") { drawing.changeBrush(-2f) }
-        addButtonVertical(tools, "＋ Pincel") { drawing.changeBrush(2f) }
+        addButtonVertical(tools, "−") { drawing.changeBrush(-2f) }
+        addButtonVertical(tools, "＋") { drawing.changeBrush(2f) }
+        addButtonVertical(tools, "Pincel…") { showBrushSettings() }
         addButtonVertical(tools, "✎") { drawing.setEraser(false) }
         addButtonVertical(tools, "⌫") { drawing.setEraser(true) }
         addButtonVertical(tools, "↶") { drawing.undo() }
         addButtonVertical(tools, "▧") { confirmClear() }
         addButtonVertical(tools, "T") { addTextNote() }
+        addButtonVertical(tools, "⌂ Vista") { drawing.resetViewport() }
         work.addView(tools, LinearLayout.LayoutParams(dp(124), -1))
 
         drawing = DrawingView(this).apply {
             onChanged = { scheduleAutosave() }
         }
         work.addView(drawing, LinearLayout.LayoutParams(0, -1, 1f).apply {
-            setMargins(3, 0, 3, 0)
+            setMargins(dp(5), 0, dp(5), 0)
         })
 
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(8, 4, 2, 2)
+            setPadding(dp(10), dp(8), dp(8), dp(8))
             setBackgroundColor(Color.rgb(37, 42, 49))
         }
         addToolLabel(side, "PLANO ACTUAL")
@@ -169,28 +173,39 @@ class MainActivity : Activity() {
         side.addView(durationLabel)
         addButtonVertical(side, "− 0,5 s") { changeDuration(-500) }
         addButtonVertical(side, "＋ 0,5 s") { changeDuration(500) }
-        addButtonVertical(side, "PNG") { exportCurrentPng() }
-        addButtonVertical(side, "PDF") { exportPdf() }
-        work.addView(side, LinearLayout.LayoutParams(dp(176), -1))
+        addButtonVertical(side, "Exportar plano PNG") { exportCurrentPng() }
+        addButtonVertical(side, "Exportar todos PNG") { exportAllPng() }
+        addButtonVertical(side, "Exportar storyboard PDF") { exportPdf() }
+        work.addView(side, LinearLayout.LayoutParams(dp(204), -1))
 
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 1f))
 
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(8, 3, 8, 5)
+            setPadding(dp(10), dp(6), dp(10), dp(8))
             setBackgroundColor(Color.rgb(20, 23, 28))
         }
         val timelineHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        addToolLabel(timelineHeader, "TIMELINE  ·  ARRASTRA EL BORDE DERECHO PARA CAMBIAR LA DURACIÓN")
+        addToolLabel(timelineHeader, "TIMELINE")
+        addButton(timelineHeader, "+ Nueva toma") { addFrame() }
+        addButton(timelineHeader, "Duplicar toma") { duplicateFrame() }
+        addButton(timelineHeader, "Eliminar toma") { deleteFrame() }
+        addButton(timelineHeader, "Duración…") { editDuration() }
+        addButton(timelineHeader, "Cargar audio…") { chooseAudio() }
         val spacer = Space(this)
         timelineHeader.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
         addButton(timelineHeader, "－") { timelineView.changeZoom(0.8f) }
         addButton(timelineHeader, "＋") { timelineView.changeZoom(1.25f) }
         addButton(timelineHeader, "◎") { timelineView.centerOnPlayhead() }
-        timelinePanel.addView(timelineHeader)
+        val timelineActionsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(timelineHeader, ViewGroup.LayoutParams(-2, -2))
+        }
+        timelinePanel.addView(timelineActionsScroll, LinearLayout.LayoutParams(-1, dp(58)))
 
         val transportRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -208,7 +223,14 @@ class MainActivity : Activity() {
             selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addButton(transportRow, "⏭") { seekToTimelinePosition(totalDuration()) }
-        timelinePanel.addView(transportRow)
+        addButton(transportRow, "← Mover antes") { moveSelectedFrame(-1) }
+        addButton(transportRow, "Mover después →") { moveSelectedFrame(1) }
+        val transportScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(transportRow, ViewGroup.LayoutParams(-2, -2))
+        }
+        timelinePanel.addView(transportScroll, LinearLayout.LayoutParams(-1, dp(62)))
 
         val horizontalScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = true
@@ -251,15 +273,15 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             contentDescription = label
-            textSize = 18f
+            textSize = if (label.length <= 3) 22f else 15f
             isAllCaps = false
-            minWidth = dp(52)
-            minimumWidth = dp(52)
-            setPadding(7, 0, 7, 0)
+            minWidth = if (label.length <= 3) dp(54) else dp(88)
+            minimumWidth = if (label.length <= 3) dp(54) else dp(88)
+            setPadding(dp(10), 0, dp(10), 0)
             setOnClickListener { action() }
         }
         parent.addView(button, LinearLayout.LayoutParams(-2, dp(54)).apply {
-            setMargins(3, 0, 3, 0)
+            setMargins(dp(5), 0, dp(5), 0)
         })
     }
 
@@ -284,15 +306,15 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             contentDescription = label
-            textSize = 16f
+            textSize = if (label.length <= 3) 22f else 14f
             isAllCaps = false
-            minWidth = dp(68)
-            minimumWidth = dp(68)
-            setPadding(3, 0, 3, 0)
+            minWidth = dp(72)
+            minimumWidth = dp(72)
+            setPadding(dp(5), 0, dp(5), 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-1, dp(52)).apply {
-            setMargins(0, 3, 0, 3)
+        parent.addView(button, LinearLayout.LayoutParams(-1, dp(54)).apply {
+            setMargins(0, dp(4), 0, dp(4))
         })
     }
 
@@ -396,6 +418,15 @@ class MainActivity : Activity() {
             }.show()
     }
 
+    private fun moveSelectedFrame(direction: Int) {
+        val target = currentFrame + direction
+        if (target !in frameDurations.indices) {
+            Toast.makeText(this, "La toma ya está en ese extremo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        moveFrame(currentFrame, target)
+    }
+
     private fun moveFrame(from: Int, to: Int) {
         if (from !in frameDurations.indices || to !in frameDurations.indices || from == to) return
         val duration = frameDurations.removeAt(from)
@@ -454,6 +485,54 @@ class MainActivity : Activity() {
                 if (value.isNotEmpty()) { drawing.addText(value); scheduleAutosave() }
             }.show()
     }
+
+    private fun showBrushSettings() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(10), dp(22), dp(4))
+        }
+        val sizeLabel = TextView(this).apply { textSize = 15f; setTextColor(Color.WHITE) }
+        val sizeSeek = SeekBar(this).apply { max = 39; progress = (drawing.brushSize() - 1f).toInt().coerceIn(0, 39) }
+        val opacityLabel = TextView(this).apply { textSize = 15f; setTextColor(Color.WHITE) }
+        val opacitySeek = SeekBar(this).apply { max = 100; progress = drawing.brushOpacity() }
+        val pressureCheck = CheckBox(this).apply {
+            text = "Usar sensibilidad a la presión del S Pen"
+            isChecked = drawing.pressureEnabled()
+            setTextColor(Color.WHITE)
+        }
+        fun updateLabels() {
+            sizeLabel.text = "Tamaño: ${sizeSeek.progress + 1}"
+            opacityLabel.text = "Opacidad: ${opacitySeek.progress}%"
+        }
+        sizeSeek.setOnSeekBarChangeListener(simpleSeekListener { updateLabels() })
+        opacitySeek.setOnSeekBarChangeListener(simpleSeekListener { updateLabels() })
+        updateLabels()
+        content.addView(sizeLabel)
+        content.addView(sizeSeek)
+        content.addView(opacityLabel)
+        content.addView(opacitySeek)
+        content.addView(pressureCheck)
+        AlertDialog.Builder(this)
+            .setTitle("Configuración del pincel")
+            .setView(content)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Aplicar") { _, _ ->
+                drawing.configureBrush(
+                    (sizeSeek.progress + 1).toFloat(),
+                    (opacitySeek.progress * 255 / 100),
+                    pressureCheck.isChecked
+                )
+                scheduleAutosave()
+            }
+            .show()
+    }
+
+    private fun simpleSeekListener(onChanged: () -> Unit) =
+        object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChanged()
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        }
 
     private fun chooseAudio() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -698,7 +777,9 @@ class MainActivity : Activity() {
     private fun saveSession(showMessage: Boolean) {
         if (!::drawing.isInitialized) return
         try {
-            sessionFile.parentFile?.mkdirs()
+            if (sessionFile.parentFile?.exists() != true && sessionFile.parentFile?.mkdirs() != true) {
+                throw IllegalStateException("No se pudo crear la carpeta de guardado")
+            }
             sessionFile.writeText(buildSessionJson().toString())
             if (showMessage) Toast.makeText(this, "Sesión guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
@@ -728,6 +809,7 @@ class MainActivity : Activity() {
             }
 
             drawing.loadJson(root.optJSONObject("drawing") ?: JSONObject())
+            drawing.resetViewport()
             currentFrame = root.optInt("currentFrame", 0).coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
 
@@ -769,13 +851,16 @@ class MainActivity : Activity() {
 
     private fun saveLocalSnapshot() {
         try {
-            sessionsDirectory.mkdirs()
+            if (!sessionsDirectory.exists() && !sessionsDirectory.mkdirs()) {
+                throw IllegalStateException("No se pudo crear la carpeta de sesiones")
+            }
             val base = projectName.trim().ifBlank { "Storyboard" }
                 .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]"), "_")
             val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
             val file = File(sessionsDirectory, "${base}_$stamp.storyboard.json")
             file.writeText(buildSessionJson().toString(2))
-            Toast.makeText(this, "Copia guardada: ${file.name}", Toast.LENGTH_LONG).show()
+            setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
+            Toast.makeText(this, "Sesión guardada en Sessions/${file.name}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("No se pudo guardar la copia: ${e.message}")
         }
@@ -878,6 +963,41 @@ class MainActivity : Activity() {
             }
             .show()
     }
+    private fun prepareStorageFolders() {
+        listOf(
+            File(appStorageDirectory, "Autosave"),
+            sessionsDirectory,
+            exportsDirectory,
+            pdfDirectory
+        ).forEach { directory ->
+            if (!directory.exists() && !directory.mkdirs()) {
+                android.util.Log.w("StoryboardStudio", "Could not create folder: ${directory.absolutePath}")
+            }
+        }
+    }
+
+    private fun migratePreviousStorage() {
+        try {
+            val oldRoot = File(filesDir, "storyboardstudio")
+            val oldAutosave = File(oldRoot, "session.json")
+            if (!sessionFile.exists() && oldAutosave.exists()) {
+                sessionFile.parentFile?.mkdirs()
+                oldAutosave.copyTo(sessionFile, overwrite = false)
+            }
+            val oldSessions = File(oldRoot, "sessions")
+            if (oldSessions.isDirectory) {
+                sessionsDirectory.mkdirs()
+                oldSessions.listFiles()?.filter { it.isFile }?.forEach { old ->
+                    val target = File(sessionsDirectory, old.name)
+                    if (!target.exists()) old.copyTo(target, overwrite = false)
+                }
+            }
+        } catch (e: Exception) {
+            // Keep the app usable even if the legacy folder cannot be migrated.
+            android.util.Log.w("StoryboardStudio", "Storage migration skipped", e)
+        }
+    }
+
     private fun loadSession() {
         if (!sessionFile.exists()) return
         try {
@@ -887,34 +1007,67 @@ class MainActivity : Activity() {
             setStatus("No se pudo recuperar la sesión: ${e.message}")
         }
     }
+    private fun ensureExportDirectory(directory: File): File {
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IllegalStateException("No se pudo crear la carpeta ${directory.absolutePath}")
+        }
+        if (!directory.isDirectory || !directory.canWrite()) {
+            throw IllegalStateException("No hay permisos de escritura en ${directory.absolutePath}")
+        }
+        return directory
+    }
+
     private fun exportPdf() {
+        var pdf: PdfDocument? = null
         try {
-            val dir = File(getExternalFilesDir(null), "StoryboardStudio/Exports")
-            dir.mkdirs()
-            val file = File(dir, "storyboard.pdf")
-            val pdf = PdfDocument()
-            for (i in frameDurations.indices) {
-                val page = pdf.startPage(PdfDocument.PageInfo.Builder(1920, 1080, i + 1).create())
-                drawing.drawFrameToCanvas(i, page.canvas)
-                pdf.finishPage(page)
+            val dir = ensureExportDirectory(pdfDirectory)
+            val file = File(dir, "storyboard_${System.currentTimeMillis()}.pdf")
+            val document = PdfDocument()
+            pdf = document
+            frameDurations.indices.forEach { index ->
+                val page = document.startPage(
+                    PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create()
+                )
+                drawing.drawFrameToCanvas(index, page.canvas)
+                document.finishPage(page)
             }
-            FileOutputStream(file).use { pdf.writeTo(it) }
-            pdf.close()
-            Toast.makeText(this, "PDF exportado: ${file.name}", Toast.LENGTH_LONG).show()
+            FileOutputStream(file).use { output -> document.writeTo(output) }
+            setStatus("PDF exportado: ${file.absolutePath}")
+            Toast.makeText(this, "PDF exportado correctamente", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            setStatus("No se pudo exportar PDF: ${e.message}")
+            setStatus("Error al exportar PDF: ${e.message}")
+            Toast.makeText(this, "Falló la exportación PDF: ${e.message}", Toast.LENGTH_LONG).show()
+        } finally {
+            try { pdf?.close() } catch (_: Exception) {}
         }
     }
 
     private fun exportCurrentPng() {
         try {
-            val dir = File(getExternalFilesDir(null), "StoryboardStudio/Exports")
-            dir.mkdirs()
-            val file = File(dir, "plano_${currentFrame + 1}.png")
+            val dir = ensureExportDirectory(exportsDirectory)
+            val file = File(dir, "plano_${(currentFrame + 1).toString().padStart(3, '0')}.png")
             drawing.exportCurrent(file)
-            Toast.makeText(this, "PNG guardado: ${file.name}", Toast.LENGTH_LONG).show()
-        } catch (_: Exception) {
-            setStatus("No se pudo exportar PNG")
+            if (!file.exists() || file.length() == 0L) {
+                throw IllegalStateException("El archivo PNG quedó vacío")
+            }
+            setStatus("PNG exportado: ${file.absolutePath}")
+            Toast.makeText(this, "Plano ${currentFrame + 1} exportado a PNG", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            setStatus("Error al exportar PNG: ${e.message}")
+            Toast.makeText(this, "Falló la exportación PNG: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun exportAllPng() {
+        try {
+            val dir = ensureExportDirectory(exportsDirectory)
+            drawing.exportAll(dir, frameDurations.size)
+            val count = frameDurations.size
+            setStatus("$count planos exportados en ${dir.absolutePath}")
+            Toast.makeText(this, "$count planos exportados a PNG", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            setStatus("Error al exportar los PNG: ${e.message}")
+            Toast.makeText(this, "Falló la exportación: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1235,6 +1388,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var current: Stroke? = null
     private var color = Color.BLACK
     private var brush = 4f
+    private var brushOpacity = 255
+    private var pressureSensitivity = true
     private var eraser = false
 
     // Viewport transform: drawings remain stored in their original 1920x1080 coordinates.
@@ -1272,6 +1427,14 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun setEraser(value: Boolean) { eraser = value }
     fun setColor(value: Int) { color = value; eraser = false }
     fun changeBrush(delta: Float) { brush = (brush + delta).coerceIn(1f, 40f) }
+    fun brushSize(): Float = brush
+    fun brushOpacity(): Int = (brushOpacity * 100 / 255).coerceIn(0, 100)
+    fun pressureEnabled(): Boolean = pressureSensitivity
+    fun configureBrush(size: Float, opacity: Int, pressure: Boolean) {
+        brush = size.coerceIn(1f, 40f)
+        brushOpacity = opacity.coerceIn(0, 255)
+        pressureSensitivity = pressure
+    }
 
     fun undo() {
         val list = strokes()
@@ -1532,7 +1695,13 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                 if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
                 val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
-                current = Stroke(mutableListOf(point), mutableListOf(brush), color, eraseStroke)
+                val strokeColor = Color.argb(
+                    brushOpacity,
+                    Color.red(color),
+                    Color.green(color),
+                    Color.blue(color)
+                )
+                current = Stroke(mutableListOf(point), mutableListOf(brush), strokeColor, eraseStroke)
                 strokes().add(current!!)
                 invalidate()
                 return true
@@ -1546,7 +1715,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                     val point = viewToDrawingPoint(event.getX(pointer), event.getY(pointer), left, top, boardScale)
                     if (point.x in 0f..1920f && point.y in 0f..1080f) {
                         stroke.points.add(point)
-                        stroke.widths.add(brush * (0.35f + pressure))
+                        stroke.widths.add(
+                            if (pressureSensitivity) brush * (0.35f + pressure) else brush
+                        )
                     }
                 }
                 invalidate()
@@ -1564,6 +1735,9 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun toJson(): JSONObject {
         val root = JSONObject()
+        root.put("brushSize", brush.toDouble())
+        root.put("brushOpacity", brushOpacity)
+        root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
         val indices = (frames.keys + notes.keys).toSet().sorted()
         indices.forEach { index ->
@@ -1598,6 +1772,9 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun loadJson(root: JSONObject) {
         frames.clear()
         notes.clear()
+        brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 40f)
+        brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
+        pressureSensitivity = root.optBoolean("pressureSensitivity", true)
         val array = root.optJSONArray("frames") ?: JSONArray()
         for (i in 0 until array.length()) {
             val frameObject = array.optJSONObject(i) ?: continue
@@ -1640,17 +1817,27 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun exportCurrent(file: File) {
         val bitmap = renderFrame(frame)
-        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
+        try {
+            val success = FileOutputStream(file).use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+            if (!success) throw IllegalStateException("Android no pudo codificar el PNG")
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     fun exportAll(dir: File, count: Int) {
         for (i in 0 until count) {
             val bitmap = renderFrame(i)
-            FileOutputStream(File(dir, "plano_${i + 1}.png")).use {
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            try {
+                val success = FileOutputStream(File(dir, "plano_${(i + 1).toString().padStart(3, '0')}.png")).use {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+                if (!success) throw IllegalStateException("No se pudo codificar el PNG del plano ${i + 1}")
+            } finally {
+                bitmap.recycle()
             }
-            bitmap.recycle()
         }
     }
 
