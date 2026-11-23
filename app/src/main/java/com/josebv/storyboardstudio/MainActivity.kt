@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private lateinit var timelineView: TimelineView
     private lateinit var status: TextView
     private lateinit var durationLabel: TextView
+    private lateinit var audioInfo: TextView
+    private lateinit var projectTitleLabel: TextView
     private lateinit var playPauseButton: Button
     private var paletteDialog: AlertDialog? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -110,54 +112,69 @@ class MainActivity : Activity() {
     }
 
     private fun buildInterface() {
-        // Initialize the drawing surface before any brush controls query its settings.
-        drawing = DrawingView(this).apply {
-            onChanged = { scheduleAutosave() }
-        }
+        // Keep the drawing surface initialized before creating controls that read its settings.
+        drawing = DrawingView(this).apply { onChanged = { scheduleAutosave() } }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(29, 33, 39))
-            setPadding(dp(8), dp(6), dp(8), dp(8))
+            setBackgroundColor(Color.rgb(205, 207, 210))
+            setPadding(dp(5), dp(4), dp(5), dp(5))
         }
 
+        // Top bar: file actions and editable project title.
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            setBackgroundColor(Color.rgb(23, 26, 31))
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+            setBackgroundColor(Color.rgb(190, 193, 197))
         }
-        val title = TextView(this).apply {
+        val brand = TextView(this).apply {
             text = "STORYBOARD STUDIO"
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
         }
-        top.addView(title, LinearLayout.LayoutParams(0, dp(34), 1f))
+        top.addView(brand, LinearLayout.LayoutParams(dp(112), dp(38)))
         addButton(top, "Archivo") { showSessionDialog() }
-        addButton(top, "💾") { saveProject() }
-        root.addView(top)
+        addButton(top, "Guardar") { saveProject() }
+        projectTitleLabel = TextView(this).apply {
+            text = projectName
+            setTextColor(Color.BLACK)
+            textSize = 15f
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), 0, dp(8), 0)
+            setOnClickListener { editProjectTitle(this) }
+        }
+        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, dp(38), 1f))
+        val appMark = TextView(this).apply {
+            text = "BV StoryboardStudio"
+            setTextColor(Color.DKGRAY)
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        }
+        top.addView(appMark, LinearLayout.LayoutParams(dp(155), dp(38)))
+        root.addView(top, LinearLayout.LayoutParams(-1, dp(42)))
 
         val work = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(3), dp(4), dp(3), dp(4))
         }
 
+        // Left drawing/tool panel. Existing actions are retained; only their grouping changes.
         val tools = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(5), dp(6), dp(8), dp(6))
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            setBackgroundColor(Color.rgb(190, 193, 197))
         }
         addToolLabel(tools, "DIBUJO")
-        addButtonVertical(tools, "−") { drawing.changeBrush(-2f) }
-        addButtonVertical(tools, "＋") { drawing.changeBrush(2f) }
         addButtonVertical(tools, "Color…") { showBrushColorPalette() }
-        addButtonVertical(tools, "Imagen…") { chooseImage() }
+        addButtonVertical(tools, "Cargar imagen") { chooseImage() }
         addToolLabel(tools, "TAMAÑO")
         val brushSizeValue = TextView(this).apply {
-            text = "${drawing.activeBrushSize().toInt()}"
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
+            text = drawing.activeBrushSize().toInt().toString()
+            textSize = 11f; gravity = Gravity.CENTER; setTextColor(Color.DKGRAY)
         }
         val brushSizeControl = SeekBar(this).apply {
             max = 199
@@ -169,17 +186,14 @@ class MainActivity : Activity() {
             })
         }
         tools.addView(brushSizeValue)
-        tools.addView(brushSizeControl, LinearLayout.LayoutParams(-1, dp(32)))
+        tools.addView(brushSizeControl, LinearLayout.LayoutParams(-1, dp(30)))
         addToolLabel(tools, "OPACIDAD")
         val brushOpacityValue = TextView(this).apply {
-            text = "${drawing.brushOpacity()}%"
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
+            text = "${drawing.brushOpacity()}%"; textSize = 11f
+            gravity = Gravity.CENTER; setTextColor(Color.DKGRAY)
         }
         val brushOpacityControl = SeekBar(this).apply {
-            max = 100
-            progress = drawing.brushOpacity()
+            max = 100; progress = drawing.brushOpacity()
             setOnSeekBarChangeListener(simpleSeekListener {
                 drawing.configureBrush(drawing.activeBrushSize(), progress * 255 / 100, drawing.pressureEnabled())
                 brushOpacityValue.text = "${progress}%"
@@ -187,50 +201,78 @@ class MainActivity : Activity() {
             })
         }
         tools.addView(brushOpacityValue)
-        tools.addView(brushOpacityControl, LinearLayout.LayoutParams(-1, dp(32)))
-        addButtonVertical(tools, "✎") { drawing.setEraser(false); brushSizeValue.text = drawing.activeBrushSize().toInt().toString(); brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199) }
-        addButtonVertical(tools, "⌫") { drawing.setEraser(true); brushSizeValue.text = drawing.activeBrushSize().toInt().toString(); brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199) }
-        addButtonVertical(tools, "↶") { drawing.undo() }
-        addButtonVertical(tools, "▧") { confirmClear() }
-        addButtonVertical(tools, "T") { addTextNote() }
-        addButtonVertical(tools, "⌂ Vista") { drawing.resetViewport() }
-        work.addView(tools, LinearLayout.LayoutParams(dp(92), -1))
+        tools.addView(brushOpacityControl, LinearLayout.LayoutParams(-1, dp(30)))
+        addToolLabel(tools, "HERRAMIENTAS")
+        addButtonVertical(tools, "Lápiz") {
+            drawing.setEraser(false)
+            brushSizeValue.text = drawing.activeBrushSize().toInt().toString()
+            brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199)
+        }
+        addButtonVertical(tools, "Goma") {
+            drawing.setEraser(true)
+            brushSizeValue.text = drawing.activeBrushSize().toInt().toString()
+            brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199)
+        }
+        val pressureButton = Button(this).apply {
+            text = if (drawing.pressureEnabled()) "Presión: ON" else "Presión: OFF"
+            textSize = 10f; isAllCaps = false; minHeight = dp(30)
+            setOnClickListener {
+                val enabled = !drawing.pressureEnabled()
+                drawing.configureBrush(drawing.activeBrushSize(), drawing.brushOpacity() * 255 / 100, enabled)
+                text = if (enabled) "Presión: ON" else "Presión: OFF"
+                scheduleAutosave()
+            }
+        }
+        tools.addView(pressureButton, LinearLayout.LayoutParams(-1, dp(34)))
+        addButtonVertical(tools, "Deshacer") { drawing.undo() }
+        addButtonVertical(tools, "Texto") { addTextNote() }
+        addButtonVertical(tools, "Limpiar") { confirmClear() }
+        addButtonVertical(tools, "Centrar vista") { drawing.resetViewport() }
+        val toolsScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(tools) }
+        work.addView(toolsScroll, LinearLayout.LayoutParams(dp(126), -1))
 
         work.addView(drawing, LinearLayout.LayoutParams(0, -1, 1f).apply {
-            setMargins(dp(5), 0, dp(5), 0)
+            setMargins(dp(4), dp(2), dp(4), dp(2))
         })
 
+        // Right inspector panel: current shot, audio information and export actions.
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(8), dp(8))
-            setBackgroundColor(Color.rgb(37, 42, 49))
+            setPadding(dp(8), dp(8), dp(6), dp(6))
+            setBackgroundColor(Color.rgb(190, 193, 197))
         }
         addToolLabel(side, "PLANO ACTUAL")
         status = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 14f
+            setTextColor(Color.DKGRAY); textSize = 13f
             setPadding(dp(3), dp(5), dp(3), dp(3))
         }
         side.addView(status)
         durationLabel = TextView(this).apply {
-            setTextColor(Color.rgb(190, 204, 220))
-            textSize = 12f
+            setTextColor(Color.DKGRAY); textSize = 11f
             setPadding(dp(3), dp(3), dp(3), dp(5))
         }
         side.addView(durationLabel)
+        audioInfo = TextView(this).apply {
+            setTextColor(Color.DKGRAY); textSize = 11f
+            setPadding(dp(3), dp(5), dp(3), dp(8))
+            text = "Sin audio cargado"
+        }
+        side.addView(audioInfo)
         addButtonVertical(side, "− 0,5 s") { changeDuration(-500) }
-        addButtonVertical(side, "＋ 0,5 s") { changeDuration(500) }
-        addButtonVertical(side, "Exportar plano PNG") { exportCurrentPng() }
-        addButtonVertical(side, "Exportar todos PNG") { exportAllPng() }
-        addButtonVertical(side, "Exportar storyboard PDF") { exportPdf() }
-        work.addView(side, LinearLayout.LayoutParams(dp(154), -1))
-
+        addButtonVertical(side, "+ 0,5 s") { changeDuration(500) }
+        addToolLabel(side, "EXPORTAR")
+        addButtonVertical(side, "Plano PNG") { exportCurrentPng() }
+        addButtonVertical(side, "Todos PNG") { exportAllPng() }
+        addButtonVertical(side, "Storyboard PDF") { exportPdf() }
+        val sideScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(side) }
+        work.addView(sideScroll, LinearLayout.LayoutParams(dp(154), -1))
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        // Bottom timeline: shot editing first, transport controls in the middle, zoom at the end.
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(8))
-            setBackgroundColor(Color.rgb(20, 23, 28))
+            setPadding(dp(7), dp(4), dp(7), dp(5))
+            setBackgroundColor(Color.rgb(190, 193, 197))
         }
         val timelineToolbarScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -240,36 +282,29 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        // Navigation and playback stay on the left.
+        addButton(timelineToolbar, "+ Toma") { addFrame() }
+        addButton(timelineToolbar, "Duplicar") { duplicateFrame() }
+        addButton(timelineToolbar, "Borrar toma") { deleteFrame() }
+        addButton(timelineToolbar, "Duración") { editDuration() }
+        addButton(timelineToolbar, "← Toma") { moveSelectedFrame(-1) }
+        addButton(timelineToolbar, "Toma →") { moveSelectedFrame(1) }
+        addButton(timelineToolbar, "Cargar audio…") { chooseAudio() }
+        val separator = View(this).apply { setBackgroundColor(Color.GRAY) }
+        timelineToolbar.addView(separator, LinearLayout.LayoutParams(dp(1), dp(25)).apply {
+            setMargins(dp(5), 0, dp(5), 0)
+        })
         addButton(timelineToolbar, "⏮") { seekToTimelinePosition(0) }
-        addButton(timelineToolbar, "◀|") {
-            stopPlayback()
-            selectFrame((currentFrame - 1).coerceAtLeast(0), true)
+        addButton(timelineToolbar, "◀| ") {
+            stopPlayback(); selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
         playPauseButton = addButtonReturning(timelineToolbar, "▶") { toggleAudio() }
         addButton(timelineToolbar, "|▶") {
-            stopPlayback()
-            selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
+            stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addButton(timelineToolbar, "⏭") { seekToTimelinePosition(totalDuration()) }
-        addButton(timelineToolbar, "－") { timelineView.changeZoom(0.8f) }
-        addButton(timelineToolbar, "＋") { timelineView.changeZoom(1.25f) }
-        addButton(timelineToolbar, "◎") { timelineView.centerOnPlayhead() }
-        addButton(timelineToolbar, "←") { moveSelectedFrame(-1) }
-        addButton(timelineToolbar, "→") { moveSelectedFrame(1) }
-
-        val separator = View(this).apply {
-            setBackgroundColor(Color.rgb(75, 83, 94))
-        }
-        timelineToolbar.addView(separator, LinearLayout.LayoutParams(dp(1), dp(24)).apply {
-            setMargins(dp(6), 0, dp(6), 0)
-        })
-        // Shot and audio actions stay on the right.
-        addButton(timelineToolbar, "+ Toma") { addFrame() }
-        addButton(timelineToolbar, "Duplicar") { duplicateFrame() }
-        addButton(timelineToolbar, "Eliminar") { deleteFrame() }
-        addButton(timelineToolbar, "Duración…") { editDuration() }
-        addButton(timelineToolbar, "Cargar audio…") { chooseAudio() }
+        addButton(timelineToolbar, "Zoom −") { timelineView.changeZoom(0.8f) }
+        addButton(timelineToolbar, "Centrar") { timelineView.centerOnPlayhead() }
+        addButton(timelineToolbar, "Zoom +") { timelineView.changeZoom(1.25f) }
         timelineToolbarScroll.addView(timelineToolbar, ViewGroup.LayoutParams(-2, -2))
         timelinePanel.addView(timelineToolbarScroll, LinearLayout.LayoutParams(-1, dp(38)))
 
@@ -282,17 +317,14 @@ class MainActivity : Activity() {
             onDurationChanged = { index, duration ->
                 if (index in frameDurations.indices) {
                     frameDurations[index] = duration
-                    updateFrameStatus()
-                    updateTimeline()
-                    scheduleAutosave()
+                    updateFrameStatus(); updateTimeline(); scheduleAutosave()
                 }
             }
             onSeek = { position ->
                 mediaPlayer?.let {
                     it.seekTo(position.coerceIn(0, max(0, audioDurationMs)))
                     timelineView.setPlayhead(position)
-                    val idx = frameAtTime(position)
-                    selectFrame(idx, false)
+                    selectFrame(frameAtTime(position), false)
                 }
             }
             onMoveFrame = { from, to -> moveFrame(from, to) }
@@ -300,12 +332,28 @@ class MainActivity : Activity() {
         horizontalScroll.addView(timelineView, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, dp(146)
         ))
-        timelinePanel.addView(horizontalScroll, LinearLayout.LayoutParams(-1, dp(152)))
-        root.addView(timelinePanel)
+        timelinePanel.addView(horizontalScroll, LinearLayout.LayoutParams(-1, dp(150)))
+        root.addView(timelinePanel, LinearLayout.LayoutParams(-1, dp(194)))
 
         setContentView(root)
         updateFrameStatus()
         updateTimeline()
+    }
+
+    private fun editProjectTitle(titleView: TextView) {
+        val input = EditText(this).apply { setText(projectName); hint = "Título del proyecto"; selectAll() }
+        AlertDialog.Builder(this)
+            .setTitle("Título del proyecto")
+            .setView(input)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Aplicar") { _, _ ->
+                val value = input.text.toString().trim()
+                if (value.isNotEmpty()) {
+                    projectName = value
+                    titleView.text = projectName
+                    scheduleAutosave()
+                }
+            }.show()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -406,6 +454,8 @@ class MainActivity : Activity() {
         val duration = frameDurations.getOrElse(currentFrame) { 3000 }
         status.text = "Plano ${currentFrame + 1} / ${frameDurations.size}"
         durationLabel.text = "Duración: ${formatTime(duration)}"
+        if (::audioInfo.isInitialized) audioInfo.text = if (audioDurationMs > 0) "Audio cargado · ${formatTime(audioDurationMs)}" else "Sin audio cargado"
+        if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
     }
 
     private fun updateTimeline() {
@@ -543,7 +593,7 @@ class MainActivity : Activity() {
             opacityLabel.text = "Opacidad ${opacity.progress}%"; scheduleAutosave()
         })
         panel.addView(opacity)
-        AlertDialog.Builder(this).setTitle("Fill Color").setView(panel).setPositiveButton("Listo", null).show()
+        AlertDialog.Builder(this).setTitle("Color del pincel").setView(panel).setPositiveButton("Listo", null).show()
     }
 
     private fun chooseImage() {
@@ -715,6 +765,7 @@ class MainActivity : Activity() {
                 setDataSource(this@MainActivity, uri)
                 setOnPreparedListener { player ->
                     audioDurationMs = player.duration
+                    updateFrameStatus()
                     updateTimeline()
                     setStatus("Audio cargado · ${formatTime(audioDurationMs)}")
                     scheduleAutosave()

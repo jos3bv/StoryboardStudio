@@ -1,16 +1,13 @@
-# Storyboard Studio 0.8.1
+# Storyboard Studio 0.8.2
 
-Actualización de Storyboard Studio para Android.
+Actualización conservadora de interfaz basada en el esquema de distribución proporcionado.
 
-## Novedades
-- Importación de imágenes desde el dispositivo al plano seleccionado. La imagen se ajusta proporcionalmente al lienzo y queda incrustada en el JSON de la sesión para no depender del archivo original.
-- Tamaño de pincel ampliado de 40 a 200.
-- Tamaño del borrador independiente del tamaño del pincel; ambos usan el mismo control y conservan sus valores por separado.
-- Selector de color con rueda cromática, cuadro de saturación/brillo y control de opacidad.
-- Regla de tiempo de la línea de tiempo con formato minutos:segundos y densidad de etiquetas adaptada al zoom.
+## Cambios
+- Barra superior con Archivo, Guardar y título editable del proyecto.
+- Panel izquierdo reorganizado para color, importación de imágenes, tamaño, opacidad y herramientas.
+- Acceso visible para activar/desactivar sensibilidad a la presión.
+- Panel derecho para información del plano, audio y exportaciones.
+- Barra inferior reorganizada: gestión de tomas, reproducción y zoom.
+- Paneles laterales desplazables para evitar que los controles queden fuera de pantalla.
 
-## Compilación
-El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.
-
-
-Corrección 0.8.1: se consolidó el manejo de resultados de selección de archivos en un único onActivityResult para evitar la declaración duplicada que impedía compilar. La importación de imágenes, audio y sesiones se procesa desde ese callback.
+Se conserva la lógica de dibujo, sesiones, importación, exportación, audio y timeline de la versión 0.8.1.
