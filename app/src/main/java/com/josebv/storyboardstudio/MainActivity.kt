@@ -19,6 +19,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -42,6 +43,7 @@ class MainActivity : Activity() {
     private var sequenceStartUptime = 0L
     private var sequenceStartPosition = 0
     private val sessionFile by lazy { File(filesDir, "storyboardstudio/session.json") }
+    private val sessionsDirectory by lazy { File(filesDir, "storyboardstudio/sessions") }
     private var restoringSession = false
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
@@ -111,12 +113,14 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
         }
         top.addView(title, LinearLayout.LayoutParams(0, 44, 1f))
-        addButton(top, "＋ Plano") { addFrame() }
-        addButton(top, "Duplicar") { duplicateFrame() }
-        addButton(top, "Eliminar") { deleteFrame() }
-        addButton(top, "Duración") { editDuration() }
-        addButton(top, "Audio") { chooseAudio() }
-        addButton(top, "Guardar sesión") { saveProject() }
+        addButton(top, "＋") { addFrame() }
+        addButton(top, "▣") { duplicateFrame() }
+        addButton(top, "✕") { deleteFrame() }
+        addButton(top, "◷") { editDuration() }
+        addButton(top, "♫") { chooseAudio() }
+        addButton(top, "⌂") { drawing.resetViewport() }
+        addButton(top, "▤") { showSessionDialog() }
+        addButton(top, "💾") { saveProject() }
         root.addView(top)
 
         val work = LinearLayout(this).apply {
@@ -129,14 +133,14 @@ class MainActivity : Activity() {
             setPadding(2, 2, 6, 2)
         }
         addToolLabel(tools, "DIBUJO")
-        addButtonVertical(tools, "Pincel −") { drawing.changeBrush(-2f) }
-        addButtonVertical(tools, "Pincel +") { drawing.changeBrush(2f) }
-        addButtonVertical(tools, "Lápiz") { drawing.setEraser(false) }
-        addButtonVertical(tools, "Borrador") { drawing.setEraser(true) }
-        addButtonVertical(tools, "Deshacer") { drawing.undo() }
-        addButtonVertical(tools, "Limpiar") { confirmClear() }
-        addButtonVertical(tools, "Texto") { addTextNote() }
-        work.addView(tools, LinearLayout.LayoutParams(112, -1))
+        addButtonVertical(tools, "− Pincel") { drawing.changeBrush(-2f) }
+        addButtonVertical(tools, "＋ Pincel") { drawing.changeBrush(2f) }
+        addButtonVertical(tools, "✎") { drawing.setEraser(false) }
+        addButtonVertical(tools, "⌫") { drawing.setEraser(true) }
+        addButtonVertical(tools, "↶") { drawing.undo() }
+        addButtonVertical(tools, "▧") { confirmClear() }
+        addButtonVertical(tools, "T") { addTextNote() }
+        work.addView(tools, LinearLayout.LayoutParams(dp(124), -1))
 
         drawing = DrawingView(this).apply {
             onChanged = { scheduleAutosave() }
@@ -164,10 +168,10 @@ class MainActivity : Activity() {
         }
         side.addView(durationLabel)
         addButtonVertical(side, "− 0,5 s") { changeDuration(-500) }
-        addButtonVertical(side, "+ 0,5 s") { changeDuration(500) }
-        addButtonVertical(side, "Exportar PNG") { exportCurrentPng() }
-        addButtonVertical(side, "Exportar PDF") { exportPdf() }
-        work.addView(side, LinearLayout.LayoutParams(158, -1))
+        addButtonVertical(side, "＋ 0,5 s") { changeDuration(500) }
+        addButtonVertical(side, "PNG") { exportCurrentPng() }
+        addButtonVertical(side, "PDF") { exportPdf() }
+        work.addView(side, LinearLayout.LayoutParams(dp(176), -1))
 
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 1f))
 
@@ -183,9 +187,9 @@ class MainActivity : Activity() {
         addToolLabel(timelineHeader, "TIMELINE  ·  ARRASTRA EL BORDE DERECHO PARA CAMBIAR LA DURACIÓN")
         val spacer = Space(this)
         timelineHeader.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
-        addButton(timelineHeader, "−") { timelineView.changeZoom(0.8f) }
-        addButton(timelineHeader, "+") { timelineView.changeZoom(1.25f) }
-        addButton(timelineHeader, "Centrar") { timelineView.centerOnPlayhead() }
+        addButton(timelineHeader, "－") { timelineView.changeZoom(0.8f) }
+        addButton(timelineHeader, "＋") { timelineView.changeZoom(1.25f) }
+        addButton(timelineHeader, "◎") { timelineView.centerOnPlayhead() }
         timelinePanel.addView(timelineHeader)
 
         val transportRow = LinearLayout(this).apply {
@@ -193,17 +197,17 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(2), 0, dp(4))
         }
-        addButton(transportRow, "⏮ Inicio") { seekToTimelinePosition(0) }
-        addButton(transportRow, "◀ Toma") {
+        addButton(transportRow, "⏮") { seekToTimelinePosition(0) }
+        addButton(transportRow, "◀|") {
             stopPlayback()
             selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addButtonReturning(transportRow, "▶ Reproducir") { toggleAudio() }
-        addButton(transportRow, "Toma ▶") {
+        playPauseButton = addButtonReturning(transportRow, "▶") { toggleAudio() }
+        addButton(transportRow, "|▶") {
             stopPlayback()
             selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
-        addButton(transportRow, "Final ⏭") { seekToTimelinePosition(totalDuration()) }
+        addButton(transportRow, "⏭") { seekToTimelinePosition(totalDuration()) }
         timelinePanel.addView(transportRow)
 
         val horizontalScroll = HorizontalScrollView(this).apply {
@@ -246,14 +250,15 @@ class MainActivity : Activity() {
     private fun addButton(parent: LinearLayout, label: String, action: () -> Unit) {
         val button = Button(this).apply {
             text = label
-            textSize = 12f
+            contentDescription = label
+            textSize = 18f
             isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(5, 0, 5, 0)
+            minWidth = dp(52)
+            minimumWidth = dp(52)
+            setPadding(7, 0, 7, 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, 46).apply {
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(54)).apply {
             setMargins(3, 0, 3, 0)
         })
     }
@@ -261,14 +266,15 @@ class MainActivity : Activity() {
     private fun addButtonReturning(parent: LinearLayout, label: String, action: () -> Unit): Button {
         val button = Button(this).apply {
             text = label
-            textSize = 12f
+            contentDescription = label
+            textSize = 22f
             isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = dp(62)
+            minimumWidth = dp(62)
             setPadding(8, 0, 8, 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, 46).apply {
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(58)).apply {
             setMargins(3, 0, 3, 0)
         })
         return button
@@ -277,15 +283,16 @@ class MainActivity : Activity() {
     private fun addButtonVertical(parent: LinearLayout, label: String, action: () -> Unit) {
         val button = Button(this).apply {
             text = label
-            textSize = 12f
+            contentDescription = label
+            textSize = 16f
             isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(2, 0, 2, 0)
+            minWidth = dp(68)
+            minimumWidth = dp(68)
+            setPadding(3, 0, 3, 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-1, 44).apply {
-            setMargins(0, 2, 0, 2)
+        parent.addView(button, LinearLayout.LayoutParams(-1, dp(52)).apply {
+            setMargins(0, 3, 0, 3)
         })
     }
 
@@ -460,22 +467,47 @@ class MainActivity : Activity() {
     @Deprecated("Legacy callback retained for broad Android compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK) {
-            val uri = data?.data ?: return
-            try {
-                data?.let { resultIntent ->
-                    if (resultIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+        if (resultCode != RESULT_OK || data?.data == null) return
+        val uri = data.data!!
+        when (requestCode) {
+            101 -> {
+                try {
+                    if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
                         contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
+                    attachAudio(uri, persistPermission = false)
+                    scheduleAutosave()
+                } catch (e: Exception) {
+                    setStatus("No se pudo abrir el audio: ${e.message}")
                 }
-                attachAudio(uri, persistPermission = false)
-                scheduleAutosave()
-            } catch (e: Exception) {
-                setStatus("No se pudo abrir el audio: ${e.message}")
+            }
+            102 -> {
+                try {
+                    contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(buildSessionJson().toString(2).toByteArray(Charsets.UTF_8))
+                    } ?: throw IllegalStateException("No se pudo crear el archivo")
+                    Toast.makeText(this, "Archivo de sesión guardado", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    setStatus("No se pudo exportar la sesión: ${e.message}")
+                }
+            }
+            103 -> {
+                try {
+                    if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val json = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                        ?: throw IllegalStateException("No se pudo leer el archivo")
+                    saveSession(showMessage = false)
+                    saveLocalSnapshot()
+                    applySessionJson(JSONObject(json))
+                    Toast.makeText(this, "Sesión cargada", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    setStatus("No se pudo abrir la sesión: ${e.message}")
+                }
             }
         }
     }
-
     private fun extractWaveform(uri: Uri): FloatArray {
         val bucketCount = 1400
         val peaks = FloatArray(bucketCount)
@@ -607,14 +639,14 @@ class MainActivity : Activity() {
                 player.seekTo(start)
             }
             player.start()
-            playPauseButton.text = "❚❚ Pausa"
+            playPauseButton.text = "❚❚"
             handler.removeCallbacks(playbackUpdater)
             handler.post(playbackUpdater)
         } else {
             sequencePlaying = true
             sequenceStartPosition = frameStartTime(currentFrame)
             sequenceStartUptime = SystemClock.uptimeMillis()
-            playPauseButton.text = "❚❚ Pausa"
+            playPauseButton.text = "❚❚"
             handler.removeCallbacks(playbackUpdater)
             handler.post(playbackUpdater)
         }
@@ -624,7 +656,7 @@ class MainActivity : Activity() {
         mediaPlayer?.takeIf { it.isPlaying }?.pause()
         sequencePlaying = false
         handler.removeCallbacks(playbackUpdater)
-        if (::playPauseButton.isInitialized) playPauseButton.text = "▶ Reproducir"
+        if (::playPauseButton.isInitialized) playPauseButton.text = "▶"
     }
 
     private fun seekToTimelinePosition(position: Int) {
@@ -649,32 +681,41 @@ class MainActivity : Activity() {
         saveSession(showMessage = true)
     }
 
+    private fun buildSessionJson(): JSONObject {
+        val root = JSONObject()
+        root.put("version", 4)
+        root.put("projectName", projectName)
+        root.put("currentFrame", currentFrame)
+        val durations = JSONArray()
+        frameDurations.forEach { durations.put(it) }
+        root.put("durations", durations)
+        root.put("drawing", drawing.toJson())
+        root.put("audioUri", audioUri?.toString() ?: JSONObject.NULL)
+        root.put("audioDurationMs", audioDurationMs)
+        return root
+    }
+
     private fun saveSession(showMessage: Boolean) {
         if (!::drawing.isInitialized) return
         try {
             sessionFile.parentFile?.mkdirs()
-            val root = JSONObject()
-            root.put("version", 3)
-            root.put("projectName", projectName)
-            root.put("currentFrame", currentFrame)
-            val durations = JSONArray()
-            frameDurations.forEach { durations.put(it) }
-            root.put("durations", durations)
-            root.put("drawing", drawing.toJson())
-            root.put("audioUri", audioUri?.toString() ?: JSONObject.NULL)
-            root.put("audioDurationMs", audioDurationMs)
-            sessionFile.writeText(root.toString())
+            sessionFile.writeText(buildSessionJson().toString())
             if (showMessage) Toast.makeText(this, "Sesión guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             setStatus("Error al guardar sesión: ${e.message}")
         }
     }
 
-    private fun loadSession() {
-        if (!sessionFile.exists()) return
+    private fun applySessionJson(root: JSONObject) {
         restoringSession = true
         try {
-            val root = JSONObject(sessionFile.readText())
+            stopPlayback()
+            mediaPlayer?.release()
+            mediaPlayer = null
+            audioUri = null
+            audioDurationMs = 0
+            waveform = FloatArray(0)
+
             projectName = root.optString("projectName", "Mi storyboard")
             frameDurations.clear()
             val savedDurations = root.optJSONArray("durations")
@@ -682,7 +723,9 @@ class MainActivity : Activity() {
                 for (i in 0 until savedDurations.length()) {
                     frameDurations.add(savedDurations.optInt(i, 3000).coerceAtLeast(100))
                 }
-            } else frameDurations.add(3000)
+            } else {
+                frameDurations.add(3000)
+            }
 
             drawing.loadJson(root.optJSONObject("drawing") ?: JSONObject())
             currentFrame = root.optInt("currentFrame", 0).coerceIn(0, frameDurations.lastIndex)
@@ -694,11 +737,154 @@ class MainActivity : Activity() {
             }
             updateFrameStatus()
             updateTimeline()
+            setStatus("Sesión abierta · ${frameDurations.size} planos")
+        } finally {
+            restoringSession = false
+        }
+        scheduleAutosave()
+    }
+
+    private fun showSessionDialog() {
+        val options = arrayOf(
+            "Guardar copia en la aplicación",
+            "Abrir sesión guardada en la aplicación",
+            "Guardar como archivo…",
+            "Abrir archivo de sesión…",
+            "Crear sesión nueva"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Administrar sesiones")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> saveLocalSnapshot()
+                    1 -> showLocalSessionsDialog()
+                    2 -> saveSessionAsFile()
+                    3 -> openSessionFile()
+                    4 -> confirmNewSession()
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun saveLocalSnapshot() {
+        try {
+            sessionsDirectory.mkdirs()
+            val base = projectName.trim().ifBlank { "Storyboard" }
+                .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]"), "_")
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val file = File(sessionsDirectory, "${base}_$stamp.storyboard.json")
+            file.writeText(buildSessionJson().toString(2))
+            Toast.makeText(this, "Copia guardada: ${file.name}", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            setStatus("No se pudo guardar la copia: ${e.message}")
+        }
+    }
+
+    private fun showLocalSessionsDialog() {
+        val files = sessionsDirectory.listFiles { file ->
+            file.isFile && file.name.endsWith(".storyboard.json")
+        }?.sortedByDescending { it.lastModified() }.orEmpty()
+        if (files.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Sesiones guardadas")
+                .setMessage("Todavía no hay copias guardadas en la aplicación.")
+                .setPositiveButton("Aceptar", null)
+                .show()
+            return
+        }
+        val labels = files.map { file ->
+            val date = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(file.lastModified()))
+            "${file.nameWithoutExtension}\n$date"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Abrir sesión")
+            .setItems(labels) { _, which ->
+                try {
+                    saveSession(showMessage = false)
+                    saveLocalSnapshot()
+                    applySessionJson(JSONObject(files[which].readText()))
+                    Toast.makeText(this, "Sesión abierta", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    setStatus("No se pudo abrir la sesión: ${e.message}")
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun saveSessionAsFile() {
+        val nameInput = EditText(this).apply {
+            setText(projectName)
+            hint = "Nombre de la sesión"
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Guardar sesión como archivo")
+            .setMessage("Elige un nombre para identificar este storyboard.")
+            .setView(nameInput)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Continuar") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                if (name.isNotBlank()) projectName = name
+                val safeName = projectName.trim().ifBlank { "Mi storyboard" }
+                    .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]"), "")
+                    .replace(" ", "_")
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "$safeName.storyboard.json")
+                }
+                startActivityForResult(intent, 102)
+                scheduleAutosave()
+            }
+            .show()
+    }
+    private fun openSessionFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(intent, 103)
+    }
+
+    private fun confirmNewSession() {
+        AlertDialog.Builder(this)
+            .setTitle("Crear sesión nueva")
+            .setMessage("Se guardará la sesión actual automáticamente antes de crear un proyecto vacío.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Crear") { _, _ ->
+                saveSession(showMessage = false)
+                saveLocalSnapshot()
+                stopPlayback()
+                mediaPlayer?.release()
+                mediaPlayer = null
+                audioUri = null
+                audioDurationMs = 0
+                waveform = FloatArray(0)
+                frameDurations.clear()
+                frameDurations.add(3000)
+                currentFrame = 0
+                projectName = "Mi storyboard"
+                drawing.clearProject()
+                drawing.resetViewport()
+                drawing.setFrame(0)
+                updateFrameStatus()
+                updateTimeline()
+                scheduleAutosave()
+                setStatus("Nueva sesión")
+            }
+            .show()
+    }
+    private fun loadSession() {
+        if (!sessionFile.exists()) return
+        try {
+            applySessionJson(JSONObject(sessionFile.readText()))
             setStatus("Sesión recuperada · ${frameDurations.size} planos")
         } catch (e: Exception) {
             setStatus("No se pudo recuperar la sesión: ${e.message}")
-        } finally {
-            restoringSession = false
         }
     }
     private fun exportPdf() {
@@ -774,6 +960,40 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val handleWidth = 13f * density
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            gestureMode = GestureMode.NONE
+            this@TimelineView.parent?.requestDisallowInterceptTouchEvent(true)
+            return true
+        }
+
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val oldScale = pixelsPerSecond
+            val newScale = (oldScale * detector.scaleFactor).coerceIn(22f, 420f)
+            if (newScale != oldScale) {
+                val scroll = this@TimelineView.parent as? HorizontalScrollView
+                val focusX = detector.focusX
+                val oldScrollX = scroll?.scrollX ?: 0
+                val screenFocusX = focusX - oldScrollX
+                val timeUnderFingers = (focusX - leftMargin) / oldScale
+                pixelsPerSecond = newScale
+                this@TimelineView.requestLayout()
+                this@TimelineView.invalidate()
+                if (scroll != null) {
+                    this@TimelineView.post {
+                        val newScrollX = (leftMargin + timeUnderFingers * pixelsPerSecond - screenFocusX)
+                            .toInt().coerceAtLeast(0)
+                        scroll.scrollTo(newScrollX, 0)
+                    }
+                }
+            }
+            return true
+        }
+
+        override fun onScaleEnd(detector: ScaleGestureDetector) {
+            this@TimelineView.parent?.requestDisallowInterceptTouchEvent(false)
+        }
+    })
     private var gestureMode = GestureMode.NONE
     private var activeIndex = -1
     private var downX = 0f
@@ -916,6 +1136,12 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        scaleDetector.onTouchEvent(event)
+        if (event.pointerCount > 1 || scaleDetector.isInProgress) {
+            gestureMode = GestureMode.NONE
+            parent?.requestDisallowInterceptTouchEvent(true)
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
@@ -1010,6 +1236,19 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var color = Color.BLACK
     private var brush = 4f
     private var eraser = false
+
+    // Viewport transform: drawings remain stored in their original 1920x1080 coordinates.
+    private var viewportScale = 1f
+    private var viewportRotation = 0f
+    private var viewportPanX = 0f
+    private var viewportPanY = 0f
+    private var lastFingerX = 0f
+    private var lastFingerY = 0f
+    private var previousSpan = 0f
+    private var previousAngle = 0f
+    private var previousMidX = 0f
+    private var previousMidY = 0f
+
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.DKGRAY
         textSize = 28f
@@ -1023,6 +1262,13 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
     fun setFrame(index: Int) { frame = index; invalidate() }
+    fun clearProject() {
+        frames.clear()
+        notes.clear()
+        current = null
+        invalidate()
+        onChanged?.invoke()
+    }
     fun setEraser(value: Boolean) { eraser = value }
     fun setColor(value: Int) { color = value; eraser = false }
     fun changeBrush(delta: Float) { brush = (brush + delta).coerceIn(1f, 40f) }
@@ -1114,14 +1360,21 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.drawColor(Color.rgb(45, 50, 57))
         val targetW = width * 0.94f
         val targetH = height * 0.90f
-        val scale = min(targetW / 16f, targetH / 9f)
-        val w = 16f * scale
-        val h = 9f * scale
+        val boardScale = min(targetW / 16f, targetH / 9f)
+        val w = 16f * boardScale
+        val h = 9f * boardScale
         val left = (width - w) / 2f
         val top = (height - h) / 2f
+
+        canvas.save()
+        canvas.translate(width / 2f + viewportPanX, height / 2f + viewportPanY)
+        canvas.rotate(viewportRotation)
+        canvas.scale(viewportScale, viewportScale)
+        canvas.translate(-width / 2f, -height / 2f)
+
         canvas.save()
         canvas.translate(left, top)
-        canvas.scale(scale / 120f, scale / 120f)
+        canvas.scale(boardScale / 120f, boardScale / 120f)
         val bg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL }
         canvas.drawRect(0f, 0f, 1920f, 1080f, bg)
         for (stroke in frames[frame].orEmpty()) drawStroke(canvas, stroke)
@@ -1132,12 +1385,71 @@ class DrawingView(context: android.content.Context) : View(context) {
             y -= 42f
         }
         canvas.restore()
+
         val border = Paint().apply {
             color = Color.rgb(130, 145, 160)
             style = Paint.Style.STROKE
             strokeWidth = 2f
         }
         canvas.drawRect(left, top, left + w, top + h, border)
+        canvas.restore()
+    }
+
+    private fun viewToDrawingPoint(
+        viewX: Float,
+        viewY: Float,
+        left: Float,
+        top: Float,
+        boardScale: Float
+    ): PointF {
+        val dx = (viewX - width / 2f - viewportPanX) / viewportScale
+        val dy = (viewY - height / 2f - viewportPanY) / viewportScale
+        val radians = Math.toRadians(viewportRotation.toDouble())
+        val cos = kotlin.math.cos(radians).toFloat()
+        val sin = kotlin.math.sin(radians).toFloat()
+        val unrotatedX = cos * dx + sin * dy + width / 2f
+        val unrotatedY = -sin * dx + cos * dy + height / 2f
+        return PointF(
+            ((unrotatedX - left) / boardScale) * 120f,
+            ((unrotatedY - top) / boardScale) * 120f
+        )
+    }
+
+    private fun updateTwoFingerTransform(event: MotionEvent) {
+        if (event.pointerCount < 2) return
+        val x1 = event.getX(0)
+        val y1 = event.getY(0)
+        val x2 = event.getX(1)
+        val y2 = event.getY(1)
+        val midX = (x1 + x2) / 2f
+        val midY = (y1 + y2) / 2f
+        val dx = x2 - x1
+        val dy = y2 - y1
+        val span = kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+        val angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+
+        if (previousSpan > 0f) {
+            viewportScale = (viewportScale * (span / previousSpan)).coerceIn(0.25f, 6f)
+            var angleDelta = angle - previousAngle
+            while (angleDelta > 180f) angleDelta -= 360f
+            while (angleDelta < -180f) angleDelta += 360f
+            viewportRotation += angleDelta
+            viewportPanX += midX - previousMidX
+            viewportPanY += midY - previousMidY
+            invalidate()
+        }
+        previousSpan = span
+        previousAngle = angle
+        previousMidX = midX
+        previousMidY = midY
+    }
+
+    fun resetViewport() {
+        viewportScale = 1f
+        viewportRotation = 0f
+        viewportPanX = 0f
+        viewportPanY = 0f
+        invalidate()
     }
 
     private fun drawStroke(canvas: Canvas, stroke: Stroke) {
@@ -1158,27 +1470,69 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val index = event.actionIndex.coerceIn(0, event.pointerCount - 1)
-        val tool = event.getToolType(index)
+        val actionIndex = event.actionIndex.coerceIn(0, event.pointerCount - 1)
+        val tool = event.getToolType(actionIndex)
         val stylus = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
-        if (!stylus && event.pointerCount > 1) return true
 
-        val scale = min((width * 0.94f) / 16f, (height * 0.90f) / 9f)
-        val w = 16f * scale
-        val h = 9f * scale
-        val left = (width - w) / 2f
-        val top = (height - h) / 2f
+        val boardScale = min((width * 0.94f) / 16f, (height * 0.90f) / 9f)
+        val boardW = 16f * boardScale
+        val boardH = 9f * boardScale
+        val left = (width - boardW) / 2f
+        val top = (height - boardH) / 2f
+
+        if (!stylus) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    current = null
+                    lastFingerX = event.x
+                    lastFingerY = event.y
+                    previousSpan = 0f
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (event.pointerCount >= 2) {
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        previousSpan = 0f
+                        updateTwoFingerTransform(event)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (event.pointerCount >= 2) {
+                        updateTwoFingerTransform(event)
+                    } else {
+                        viewportPanX += event.x - lastFingerX
+                        viewportPanY += event.y - lastFingerY
+                        lastFingerX = event.x
+                        lastFingerY = event.y
+                        invalidate()
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    previousSpan = 0f
+                    val remaining = if (event.actionIndex == 0) 1 else 0
+                    if (remaining < event.pointerCount) {
+                        lastFingerX = event.getX(remaining)
+                        lastFingerY = event.getY(remaining)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    previousSpan = 0f
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    return true
+                }
+            }
+            return true
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) {
-                    return true
-                }
-                val x = ((event.x - left) / scale) * 120f
-                val y = ((event.y - top) / scale) * 120f
-                if (x !in 0f..1920f || y !in 0f..1080f) return true
+                val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
+                if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
                 val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
-                current = Stroke(mutableListOf(PointF(x, y)), mutableListOf(brush), color, eraseStroke)
+                current = Stroke(mutableListOf(point), mutableListOf(brush), color, eraseStroke)
                 strokes().add(current!!)
                 invalidate()
                 return true
@@ -1189,10 +1543,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                     val pointerTool = event.getToolType(pointer)
                     if (pointerTool != MotionEvent.TOOL_TYPE_STYLUS && pointerTool != MotionEvent.TOOL_TYPE_ERASER) continue
                     val pressure = event.getPressure(pointer).coerceIn(0.1f, 1f)
-                    val x = ((event.getX(pointer) - left) / scale) * 120f
-                    val y = ((event.getY(pointer) - top) / scale) * 120f
-                    if (x in 0f..1920f && y in 0f..1080f) {
-                        stroke.points.add(PointF(x, y))
+                    val point = viewToDrawingPoint(event.getX(pointer), event.getY(pointer), left, top, boardScale)
+                    if (point.x in 0f..1920f && point.y in 0f..1080f) {
+                        stroke.points.add(point)
                         stroke.widths.add(brush * (0.35f + pressure))
                     }
                 }
