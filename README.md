@@ -1,38 +1,20 @@
-# Storyboard Studio 0.5.0
+# Storyboard Studio 0.6.0
 
 ## Interfaz
-- Barra superior simplificada con opciones de archivo y guardado.
-- Acciones de nueva toma, duplicar, eliminar, duración y carga de audio ubicadas junto a la timeline.
-- Controles de reproducción y zoom siguen siendo iconos.
-- Acciones descriptivas mantienen etiquetas de texto.
-- Márgenes y áreas de interacción ampliados.
-
-## Timeline
-- Zoom táctil de dos dedos, además de controles + / - y centrar.
-- Botones para mover la toma seleccionada una posición antes o después.
-- Se mantiene el arrastre del borde derecho para ajustar duración y el reordenamiento por arrastre.
-
-## Sesiones y carpetas
-La aplicación crea estas carpetas dentro del almacenamiento externo privado de la app:
-- `Android/data/com.josebv.storyboardstudio/files/StoryboardStudio/Autosave`
-- `Android/data/com.josebv.storyboardstudio/files/StoryboardStudio/Sessions`
-- `Android/data/com.josebv.storyboardstudio/files/StoryboardStudio/Exports/PNG`
-- `Android/data/com.josebv.storyboardstudio/files/StoryboardStudio/Exports/PDF`
-
-Las sesiones guardadas como copias y los archivos de sesión importados/exportados se administran en Sessions. Se intenta migrar el autosave y las copias locales de versiones anteriores.
-
-## Exportación
-- Exportar el plano seleccionado a PNG.
-- Exportar todos los planos a PNG.
-- Exportar el storyboard completo a PDF multipágina.
-- Se comprueba que los archivos se hayan creado y que la escritura termine correctamente.
-- Los errores de exportación muestran el motivo recibido del sistema.
+- Tamaño de botones y tipografía de controles reducido aproximadamente a la mitad respecto de 0.5.0.
+- Barra de timeline en una sola línea: navegación/reproducción/zoom a la izquierda; tomas y audio a la derecha.
+- Se eliminaron las dos filas superiores separadas.
 
 ## Pincel
-- Tamaño configurable.
-- Opacidad configurable.
-- Sensibilidad a presión del S Pen activable/desactivable.
-- Las preferencias del pincel se guardan dentro de la sesión.
+- Trazo suavizado mediante curvas cuadráticas y muestreo de trayectoria.
+- Uniones y extremos redondeados con antialiasing.
+- Captura de muestras históricas del S Pen para evitar saltos al dibujar rápido.
+- Sensibilidad de presión con respuesta curva y variación progresiva del grosor.
+- Se conservan tamaño y opacidad configurables.
+
+## Exportación a Documentos
+En Android 10 o posterior, PNG y PDF se guardan usando MediaStore en: `Documentos/StoryboardStudio/PNG` y `Documentos/StoryboardStudio/PDF`. No es necesario entrar manualmente a Android/data.
+En Android 6–9 se usa el directorio Documents privado de la aplicación como alternativa compatible.
 
 ## Compilación
 - Android Gradle Plugin 8.7.3

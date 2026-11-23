@@ -3,6 +3,7 @@ package com.josebv.storyboardstudio
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.ContentValues
 import android.content.pm.ActivityInfo
 import android.graphics.*
 import android.graphics.pdf.PdfDocument
@@ -12,6 +13,9 @@ import android.media.MediaFormat
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -26,6 +30,7 @@ import android.view.WindowManager
 import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -117,10 +122,10 @@ class MainActivity : Activity() {
         val title = TextView(this).apply {
             text = "STORYBOARD STUDIO"
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
         }
-        top.addView(title, LinearLayout.LayoutParams(0, dp(50), 1f))
+        top.addView(title, LinearLayout.LayoutParams(0, dp(34), 1f))
         addButton(top, "Archivo") { showSessionDialog() }
         addButton(top, "💾") { saveProject() }
         root.addView(top)
@@ -144,7 +149,7 @@ class MainActivity : Activity() {
         addButtonVertical(tools, "▧") { confirmClear() }
         addButtonVertical(tools, "T") { addTextNote() }
         addButtonVertical(tools, "⌂ Vista") { drawing.resetViewport() }
-        work.addView(tools, LinearLayout.LayoutParams(dp(124), -1))
+        work.addView(tools, LinearLayout.LayoutParams(dp(92), -1))
 
         drawing = DrawingView(this).apply {
             onChanged = { scheduleAutosave() }
@@ -161,14 +166,14 @@ class MainActivity : Activity() {
         addToolLabel(side, "PLANO ACTUAL")
         status = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 18f
-            setPadding(4, 10, 4, 6)
+            textSize = 14f
+            setPadding(dp(3), dp(5), dp(3), dp(3))
         }
         side.addView(status)
         durationLabel = TextView(this).apply {
             setTextColor(Color.rgb(190, 204, 220))
-            textSize = 15f
-            setPadding(4, 4, 4, 10)
+            textSize = 12f
+            setPadding(dp(3), dp(3), dp(3), dp(5))
         }
         side.addView(durationLabel)
         addButtonVertical(side, "− 0,5 s") { changeDuration(-500) }
@@ -176,7 +181,7 @@ class MainActivity : Activity() {
         addButtonVertical(side, "Exportar plano PNG") { exportCurrentPng() }
         addButtonVertical(side, "Exportar todos PNG") { exportAllPng() }
         addButtonVertical(side, "Exportar storyboard PDF") { exportPdf() }
-        work.addView(side, LinearLayout.LayoutParams(dp(204), -1))
+        work.addView(side, LinearLayout.LayoutParams(dp(154), -1))
 
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 1f))
 
@@ -185,52 +190,46 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(6), dp(10), dp(8))
             setBackgroundColor(Color.rgb(20, 23, 28))
         }
-        val timelineHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        addToolLabel(timelineHeader, "TIMELINE")
-        addButton(timelineHeader, "+ Nueva toma") { addFrame() }
-        addButton(timelineHeader, "Duplicar toma") { duplicateFrame() }
-        addButton(timelineHeader, "Eliminar toma") { deleteFrame() }
-        addButton(timelineHeader, "Duración…") { editDuration() }
-        addButton(timelineHeader, "Cargar audio…") { chooseAudio() }
-        val spacer = Space(this)
-        timelineHeader.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
-        addButton(timelineHeader, "－") { timelineView.changeZoom(0.8f) }
-        addButton(timelineHeader, "＋") { timelineView.changeZoom(1.25f) }
-        addButton(timelineHeader, "◎") { timelineView.centerOnPlayhead() }
-        val timelineActionsScroll = HorizontalScrollView(this).apply {
+        val timelineToolbarScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            addView(timelineHeader, ViewGroup.LayoutParams(-2, -2))
         }
-        timelinePanel.addView(timelineActionsScroll, LinearLayout.LayoutParams(-1, dp(58)))
-
-        val transportRow = LinearLayout(this).apply {
+        val timelineToolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(2), 0, dp(4))
         }
-        addButton(transportRow, "⏮") { seekToTimelinePosition(0) }
-        addButton(transportRow, "◀|") {
+        // Navigation and playback stay on the left.
+        addButton(timelineToolbar, "⏮") { seekToTimelinePosition(0) }
+        addButton(timelineToolbar, "◀|") {
             stopPlayback()
             selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addButtonReturning(transportRow, "▶") { toggleAudio() }
-        addButton(transportRow, "|▶") {
+        playPauseButton = addButtonReturning(timelineToolbar, "▶") { toggleAudio() }
+        addButton(timelineToolbar, "|▶") {
             stopPlayback()
             selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
-        addButton(transportRow, "⏭") { seekToTimelinePosition(totalDuration()) }
-        addButton(transportRow, "← Mover antes") { moveSelectedFrame(-1) }
-        addButton(transportRow, "Mover después →") { moveSelectedFrame(1) }
-        val transportScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(transportRow, ViewGroup.LayoutParams(-2, -2))
+        addButton(timelineToolbar, "⏭") { seekToTimelinePosition(totalDuration()) }
+        addButton(timelineToolbar, "－") { timelineView.changeZoom(0.8f) }
+        addButton(timelineToolbar, "＋") { timelineView.changeZoom(1.25f) }
+        addButton(timelineToolbar, "◎") { timelineView.centerOnPlayhead() }
+        addButton(timelineToolbar, "←") { moveSelectedFrame(-1) }
+        addButton(timelineToolbar, "→") { moveSelectedFrame(1) }
+
+        val separator = View(this).apply {
+            setBackgroundColor(Color.rgb(75, 83, 94))
         }
-        timelinePanel.addView(transportScroll, LinearLayout.LayoutParams(-1, dp(62)))
+        timelineToolbar.addView(separator, LinearLayout.LayoutParams(dp(1), dp(24)).apply {
+            setMargins(dp(6), 0, dp(6), 0)
+        })
+        // Shot and audio actions stay on the right.
+        addButton(timelineToolbar, "+ Toma") { addFrame() }
+        addButton(timelineToolbar, "Duplicar") { duplicateFrame() }
+        addButton(timelineToolbar, "Eliminar") { deleteFrame() }
+        addButton(timelineToolbar, "Duración…") { editDuration() }
+        addButton(timelineToolbar, "Cargar audio…") { chooseAudio() }
+        timelineToolbarScroll.addView(timelineToolbar, ViewGroup.LayoutParams(-2, -2))
+        timelinePanel.addView(timelineToolbarScroll, LinearLayout.LayoutParams(-1, dp(38)))
 
         val horizontalScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = true
@@ -273,15 +272,15 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             contentDescription = label
-            textSize = if (label.length <= 3) 22f else 15f
+            textSize = if (label.length <= 3) 15f else 11f
             isAllCaps = false
-            minWidth = if (label.length <= 3) dp(54) else dp(88)
-            minimumWidth = if (label.length <= 3) dp(54) else dp(88)
-            setPadding(dp(10), 0, dp(10), 0)
+            minWidth = if (label.length <= 3) dp(34) else dp(54)
+            minimumWidth = if (label.length <= 3) dp(34) else dp(54)
+            setPadding(dp(4), 0, dp(4), 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, dp(54)).apply {
-            setMargins(dp(5), 0, dp(5), 0)
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(32)).apply {
+            setMargins(dp(2), 0, dp(2), 0)
         })
     }
 
@@ -289,15 +288,15 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             contentDescription = label
-            textSize = 22f
+            textSize = 17f
             isAllCaps = false
-            minWidth = dp(62)
-            minimumWidth = dp(62)
-            setPadding(8, 0, 8, 0)
+            minWidth = dp(38)
+            minimumWidth = dp(38)
+            setPadding(dp(4), 0, dp(4), 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, dp(58)).apply {
-            setMargins(3, 0, 3, 0)
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(34)).apply {
+            setMargins(dp(2), 0, dp(2), 0)
         })
         return button
     }
@@ -306,15 +305,15 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             contentDescription = label
-            textSize = if (label.length <= 3) 22f else 14f
+            textSize = if (label.length <= 3) 15f else 10f
             isAllCaps = false
-            minWidth = dp(72)
-            minimumWidth = dp(72)
-            setPadding(dp(5), 0, dp(5), 0)
+            minWidth = dp(48)
+            minimumWidth = dp(48)
+            setPadding(dp(3), 0, dp(3), 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-1, dp(54)).apply {
-            setMargins(0, dp(4), 0, dp(4))
+        parent.addView(button, LinearLayout.LayoutParams(-1, dp(30)).apply {
+            setMargins(0, dp(2), 0, dp(2))
         })
     }
 
@@ -1007,51 +1006,80 @@ class MainActivity : Activity() {
             setStatus("No se pudo recuperar la sesión: ${e.message}")
         }
     }
-    private fun ensureExportDirectory(directory: File): File {
-        if (!directory.exists() && !directory.mkdirs()) {
-            throw IllegalStateException("No se pudo crear la carpeta ${directory.absolutePath}")
+    private fun writeToDocuments(
+        displayName: String,
+        mimeType: String,
+        subfolder: String,
+        writer: (OutputStream) -> Unit
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOCUMENTS + "/StoryboardStudio/" + subfolder
+                )
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = contentResolver.insert(collection, values)
+                ?: throw IllegalStateException("Android no permitió crear el archivo en Documentos")
+            try {
+                contentResolver.openOutputStream(uri, "w")?.use(writer)
+                    ?: throw IllegalStateException("No se pudo abrir el archivo para escritura")
+                val ready = ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                }
+                contentResolver.update(uri, ready, null, null)
+            } catch (e: Exception) {
+                contentResolver.delete(uri, null, null)
+                throw e
+            }
+        } else {
+            // Android 6–9 fallback: app's Documents export folder (legacy shared-storage access is restricted).
+            val base = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
+                "StoryboardStudio/$subfolder")
+            if (!base.exists() && !base.mkdirs()) {
+                throw IllegalStateException("No se pudo crear ${base.absolutePath}")
+            }
+            FileOutputStream(File(base, displayName)).use(writer)
         }
-        if (!directory.isDirectory || !directory.canWrite()) {
-            throw IllegalStateException("No hay permisos de escritura en ${directory.absolutePath}")
-        }
-        return directory
     }
 
     private fun exportPdf() {
-        var pdf: PdfDocument? = null
+        var document: PdfDocument? = null
         try {
-            val dir = ensureExportDirectory(pdfDirectory)
-            val file = File(dir, "storyboard_${System.currentTimeMillis()}.pdf")
-            val document = PdfDocument()
-            pdf = document
+            val pdf = PdfDocument()
+            document = pdf
             frameDurations.indices.forEach { index ->
-                val page = document.startPage(
+                val page = pdf.startPage(
                     PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create()
                 )
                 drawing.drawFrameToCanvas(index, page.canvas)
-                document.finishPage(page)
+                pdf.finishPage(page)
             }
-            FileOutputStream(file).use { output -> document.writeTo(output) }
-            setStatus("PDF exportado: ${file.absolutePath}")
-            Toast.makeText(this, "PDF exportado correctamente", Toast.LENGTH_LONG).show()
+            writeToDocuments(
+                "storyboard_${System.currentTimeMillis()}.pdf",
+                "application/pdf",
+                "PDF"
+            ) { output -> pdf.writeTo(output) }
+            setStatus("PDF guardado en Documentos/StoryboardStudio/PDF")
+            Toast.makeText(this, "PDF exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PDF: ${e.message}")
             Toast.makeText(this, "Falló la exportación PDF: ${e.message}", Toast.LENGTH_LONG).show()
         } finally {
-            try { pdf?.close() } catch (_: Exception) {}
+            try { document?.close() } catch (_: Exception) {}
         }
     }
 
     private fun exportCurrentPng() {
         try {
-            val dir = ensureExportDirectory(exportsDirectory)
-            val file = File(dir, "plano_${(currentFrame + 1).toString().padStart(3, '0')}.png")
-            drawing.exportCurrent(file)
-            if (!file.exists() || file.length() == 0L) {
-                throw IllegalStateException("El archivo PNG quedó vacío")
-            }
-            setStatus("PNG exportado: ${file.absolutePath}")
-            Toast.makeText(this, "Plano ${currentFrame + 1} exportado a PNG", Toast.LENGTH_LONG).show()
+            val name = "plano_${(currentFrame + 1).toString().padStart(3, '0')}.png"
+            writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportCurrent(output) }
+            setStatus("PNG guardado en Documentos/StoryboardStudio/PNG")
+            Toast.makeText(this, "Plano ${currentFrame + 1} exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PNG: ${e.message}")
             Toast.makeText(this, "Falló la exportación PNG: ${e.message}", Toast.LENGTH_LONG).show()
@@ -1060,13 +1088,14 @@ class MainActivity : Activity() {
 
     private fun exportAllPng() {
         try {
-            val dir = ensureExportDirectory(exportsDirectory)
-            drawing.exportAll(dir, frameDurations.size)
-            val count = frameDurations.size
-            setStatus("$count planos exportados en ${dir.absolutePath}")
-            Toast.makeText(this, "$count planos exportados a PNG", Toast.LENGTH_LONG).show()
+            for (i in frameDurations.indices) {
+                val name = "plano_${(i + 1).toString().padStart(3, '0')}.png"
+                writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportFrame(i, output) }
+            }
+            setStatus("${frameDurations.size} PNG guardados en Documentos/StoryboardStudio/PNG")
+            Toast.makeText(this, "${frameDurations.size} planos exportados a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            setStatus("Error al exportar los PNG: ${e.message}")
+            setStatus("Error al exportar PNG: ${e.message}")
             Toast.makeText(this, "Falló la exportación: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
@@ -1616,20 +1645,67 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun drawStroke(canvas: Canvas, stroke: Stroke) {
-        if (stroke.points.size < 2) return
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        if (stroke.points.isEmpty()) return
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
             color = if (stroke.erase) Color.WHITE else stroke.color
+            isDither = true
         }
-        for (i in 1 until stroke.points.size) {
-            p.strokeWidth = (stroke.widths.getOrElse(i) { 4f }) * 2f
-            canvas.drawLine(
-                stroke.points[i - 1].x, stroke.points[i - 1].y,
-                stroke.points[i].x, stroke.points[i].y, p
-            )
+        val fillPaint = Paint(paint).apply { style = Paint.Style.FILL }
+        val baseWidth = (stroke.widths.firstOrNull() ?: 4f).coerceAtLeast(0.5f) * 2f
+        if (stroke.points.size == 1) {
+            val point = stroke.points[0]
+            canvas.drawCircle(point.x, point.y, baseWidth / 2f, fillPaint)
+            return
         }
+
+        // Build a smoothed centerline through midpoint quadratic segments.
+        val smoothed = Path().apply {
+            moveTo(stroke.points.first().x, stroke.points.first().y)
+            for (i in 1 until stroke.points.lastIndex) {
+                val currentPoint = stroke.points[i]
+                val nextPoint = stroke.points[i + 1]
+                val midX = (currentPoint.x + nextPoint.x) * 0.5f
+                val midY = (currentPoint.y + nextPoint.y) * 0.5f
+                quadTo(currentPoint.x, currentPoint.y, midX, midY)
+            }
+            val last = stroke.points.last()
+            lineTo(last.x, last.y)
+        }
+
+        // Sample the smoothed path and interpolate pressure width along it.
+        val measure = PathMeasure(smoothed, false)
+        val length = measure.length
+        val samples = max(2, min(2400, (length / 3f).toInt() + 1))
+        val position = FloatArray(2)
+        val tangent = FloatArray(2)
+        var previousPoint: PointF? = null
+        var previousWidth = baseWidth
+        for (sample in 0..samples) {
+            val distance = length * sample / samples
+            measure.getPosTan(distance, position, tangent)
+            val point = PointF(position[0], position[1])
+            val ratio = if (samples == 0) 0f else sample.toFloat() / samples
+            val rawIndex = ratio * (stroke.points.size - 1)
+            val lower = rawIndex.toInt().coerceIn(0, stroke.points.lastIndex)
+            val upper = (lower + 1).coerceAtMost(stroke.points.lastIndex)
+            val fraction = rawIndex - lower
+            val w0 = stroke.widths.getOrElse(lower) { 4f }
+            val w1 = stroke.widths.getOrElse(upper) { w0 }
+            val width = ((w0 + (w1 - w0) * fraction).coerceAtLeast(0.5f)) * 2f
+            val previous = previousPoint
+            if (previous != null) {
+                paint.strokeWidth = (previousWidth + width) * 0.5f
+                canvas.drawLine(previous.x, previous.y, point.x, point.y, paint)
+            } else {
+                canvas.drawCircle(point.x, point.y, width * 0.5f, fillPaint)
+            }
+            previousPoint = point
+            previousWidth = width
+        }
+        previousPoint?.let { canvas.drawCircle(it.x, it.y, previousWidth * 0.5f, fillPaint) }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -1701,7 +1777,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                     Color.green(color),
                     Color.blue(color)
                 )
-                current = Stroke(mutableListOf(point), mutableListOf(brush), strokeColor, eraseStroke)
+                val initialPressure = event.pressure.coerceIn(0.05f, 1f)
+                val initialWidth = if (pressureSensitivity) brush * (0.18f + initialPressure * initialPressure * 1.12f) else brush
+                current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 strokes().add(current!!)
                 invalidate()
                 return true
@@ -1711,14 +1789,30 @@ class DrawingView(context: android.content.Context) : View(context) {
                 for (pointer in 0 until event.pointerCount) {
                     val pointerTool = event.getToolType(pointer)
                     if (pointerTool != MotionEvent.TOOL_TYPE_STYLUS && pointerTool != MotionEvent.TOOL_TYPE_ERASER) continue
-                    val pressure = event.getPressure(pointer).coerceIn(0.1f, 1f)
-                    val point = viewToDrawingPoint(event.getX(pointer), event.getY(pointer), left, top, boardScale)
-                    if (point.x in 0f..1920f && point.y in 0f..1080f) {
-                        stroke.points.add(point)
-                        stroke.widths.add(
-                            if (pressureSensitivity) brush * (0.35f + pressure) else brush
+                    fun appendSample(x: Float, y: Float, rawPressure: Float) {
+                        val pressure = rawPressure.coerceIn(0.05f, 1f)
+                        val point = viewToDrawingPoint(x, y, left, top, boardScale)
+                        if (point.x in 0f..1920f && point.y in 0f..1080f) {
+                            val prior = stroke.points.lastOrNull()
+                            val distance = if (prior == null) 999f else kotlin.math.hypot((point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()).toFloat()
+                            if (distance >= 0.35f) {
+                                stroke.points.add(point)
+                                val pressureFactor = if (pressureSensitivity) {
+                                    val curved = pressure * pressure
+                                    0.18f + curved * 1.12f
+                                } else 1f
+                                stroke.widths.add((brush * pressureFactor).coerceAtLeast(0.5f))
+                            }
+                        }
+                    }
+                    for (history in 0 until event.historySize) {
+                        appendSample(
+                            event.getHistoricalX(pointer, history),
+                            event.getHistoricalY(pointer, history),
+                            event.getHistoricalPressure(pointer, history)
                         )
                     }
+                    appendSample(event.getX(pointer), event.getY(pointer), event.getPressure(pointer))
                 }
                 invalidate()
                 return true
@@ -1815,29 +1909,19 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
     }
 
-    fun exportCurrent(file: File) {
-        val bitmap = renderFrame(frame)
-        try {
-            val success = FileOutputStream(file).use {
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-            }
-            if (!success) throw IllegalStateException("Android no pudo codificar el PNG")
-        } finally {
-            bitmap.recycle()
-        }
+    fun exportCurrent(output: OutputStream) {
+        exportFrame(frame, output)
     }
 
-    fun exportAll(dir: File, count: Int) {
-        for (i in 0 until count) {
-            val bitmap = renderFrame(i)
-            try {
-                val success = FileOutputStream(File(dir, "plano_${(i + 1).toString().padStart(3, '0')}.png")).use {
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-                }
-                if (!success) throw IllegalStateException("No se pudo codificar el PNG del plano ${i + 1}")
-            } finally {
-                bitmap.recycle()
+    fun exportFrame(index: Int, output: OutputStream) {
+        val bitmap = renderFrame(index)
+        try {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                throw IllegalStateException("Android no pudo codificar el PNG del plano ${index + 1}")
             }
+            output.flush()
+        } finally {
+            bitmap.recycle()
         }
     }
 
