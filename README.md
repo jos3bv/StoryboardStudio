@@ -1,5 +1,13 @@
-# Storyboard Studio 0.7.1
+# Storyboard Studio 0.8.0
 
-Corrección de inicio respecto de 0.7.0: DrawingView se inicializa antes de crear los controles que consultan tamaño y opacidad del pincel. Se conservan la paleta de color, los controles directos, el autosave y las funciones de sesiones/exportación.
+Actualización de Storyboard Studio para Android.
 
-Versión fuente para compilar mediante GitHub Actions.
+## Novedades
+- Importación de imágenes desde el dispositivo al plano seleccionado. La imagen se ajusta proporcionalmente al lienzo y queda incrustada en el JSON de la sesión para no depender del archivo original.
+- Tamaño de pincel ampliado de 40 a 200.
+- Tamaño del borrador independiente del tamaño del pincel; ambos usan el mismo control y conservan sus valores por separado.
+- Selector de color con rueda cromática, cuadro de saturación/brillo y control de opacidad.
+- Regla de tiempo de la línea de tiempo con formato minutos:segundos y densidad de etiquetas adaptada al zoom.
+
+## Compilación
+El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.

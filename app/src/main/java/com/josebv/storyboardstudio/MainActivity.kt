@@ -31,6 +31,7 @@ import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import android.util.Base64
 import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -38,6 +39,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : Activity() {
+    companion object { private const val REQUEST_IMAGE = 8042 }
     private lateinit var drawing: DrawingView
     private lateinit var timelineView: TimelineView
     private lateinit var status: TextView
@@ -149,18 +151,19 @@ class MainActivity : Activity() {
         addButtonVertical(tools, "−") { drawing.changeBrush(-2f) }
         addButtonVertical(tools, "＋") { drawing.changeBrush(2f) }
         addButtonVertical(tools, "Color…") { showBrushColorPalette() }
+        addButtonVertical(tools, "Imagen…") { chooseImage() }
         addToolLabel(tools, "TAMAÑO")
         val brushSizeValue = TextView(this).apply {
-            text = "${drawing.brushSize().toInt()}"
+            text = "${drawing.activeBrushSize().toInt()}"
             textSize = 11f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
         }
         val brushSizeControl = SeekBar(this).apply {
-            max = 39
-            progress = (drawing.brushSize() - 1f).toInt().coerceIn(0, 39)
+            max = 199
+            progress = (drawing.activeBrushSize() - 1f).toInt().coerceIn(0, 199)
             setOnSeekBarChangeListener(simpleSeekListener {
-                drawing.configureBrush(progress + 1f, drawing.brushOpacity() * 255 / 100, drawing.pressureEnabled())
+                drawing.setActiveBrushSize(progress + 1f)
                 brushSizeValue.text = "${progress + 1}"
                 scheduleAutosave()
             })
@@ -178,15 +181,15 @@ class MainActivity : Activity() {
             max = 100
             progress = drawing.brushOpacity()
             setOnSeekBarChangeListener(simpleSeekListener {
-                drawing.configureBrush(drawing.brushSize(), progress * 255 / 100, drawing.pressureEnabled())
+                drawing.configureBrush(drawing.activeBrushSize(), progress * 255 / 100, drawing.pressureEnabled())
                 brushOpacityValue.text = "${progress}%"
                 scheduleAutosave()
             })
         }
         tools.addView(brushOpacityValue)
         tools.addView(brushOpacityControl, LinearLayout.LayoutParams(-1, dp(32)))
-        addButtonVertical(tools, "✎") { drawing.setEraser(false) }
-        addButtonVertical(tools, "⌫") { drawing.setEraser(true) }
+        addButtonVertical(tools, "✎") { drawing.setEraser(false); brushSizeValue.text = drawing.activeBrushSize().toInt().toString(); brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199) }
+        addButtonVertical(tools, "⌫") { drawing.setEraser(true); brushSizeValue.text = drawing.activeBrushSize().toInt().toString(); brushSizeControl.progress = (drawing.activeBrushSize()-1f).toInt().coerceIn(0,199) }
         addButtonVertical(tools, "↶") { drawing.undo() }
         addButtonVertical(tools, "▧") { confirmClear() }
         addButtonVertical(tools, "T") { addTextNote() }
@@ -525,49 +528,43 @@ class MainActivity : Activity() {
     }
 
     private fun showBrushColorPalette() {
-        val colors = listOf(
-            "Negro" to Color.BLACK, "Gris" to Color.GRAY,
-            "Blanco" to Color.WHITE, "Rojo" to Color.rgb(220, 55, 55),
-            "Naranja" to Color.rgb(245, 140, 45), "Amarillo" to Color.rgb(245, 210, 55),
-            "Verde" to Color.rgb(65, 175, 95), "Cian" to Color.rgb(45, 190, 205),
-            "Azul" to Color.rgb(55, 115, 225), "Violeta" to Color.rgb(145, 85, 205),
-            "Rosa" to Color.rgb(230, 105, 160), "Marrón" to Color.rgb(135, 85, 55)
-        )
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        val picker = HueSatValPickerView(this, drawing.currentHue(), drawing.currentSaturation()/100f, drawing.currentValue()/100f) { h, sat, v ->
+            drawing.setColorFromHsv(h, sat, v); scheduleAutosave()
         }
-        colors.chunked(4).forEach { rowColors ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-            }
-            rowColors.forEach { (name, color) ->
-                val swatch = Button(this).apply {
-                    text = "●\\n$name"
-                    textSize = 12f
-                    isAllCaps = false
-                    val luminance = 0.299f * Color.red(color) + 0.587f * Color.green(color) + 0.114f * Color.blue(color)
-                    setTextColor(if (luminance < 128f) Color.WHITE else Color.BLACK)
-                    setBackgroundTintList(android.content.res.ColorStateList.valueOf(color))
-                    setOnClickListener {
-                        drawing.setColor(color)
-                        scheduleAutosave()
-                        paletteDialog?.dismiss()
-                    }
+        panel.addView(picker, LinearLayout.LayoutParams(dp(280), dp(280)))
+        val preview = View(this).apply { setBackgroundColor(drawing.currentColor()) }
+        panel.addView(preview, LinearLayout.LayoutParams(-1, dp(24)))
+        val opacityLabel = TextView(this).apply { text = "Opacidad ${drawing.brushOpacity()}%"; setTextColor(Color.WHITE); textSize = 12f }
+        panel.addView(opacityLabel)
+        val opacity = SeekBar(this).apply { max = 100; progress = drawing.brushOpacity() }
+        opacity.setOnSeekBarChangeListener(simpleSeekListener {
+            drawing.configureBrush(drawing.activeBrushSize(), opacity.progress*255/100, drawing.pressureEnabled())
+            opacityLabel.text = "Opacidad ${opacity.progress}%"; scheduleAutosave()
+        })
+        panel.addView(opacity)
+        AlertDialog.Builder(this).setTitle("Fill Color").setView(panel).setPositiveButton("Listo", null).show()
+    }
+
+    private fun chooseImage() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "image/*" }
+        startActivityForResult(intent, REQUEST_IMAGE)
+    }
+
+    @Deprecated("Deprecated by Android but compatible with the project's API level")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_IMAGE && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            try {
+                contentResolver.openInputStream(uri).use { stream ->
+                    val bitmap = BitmapFactory.decodeStream(stream) ?: throw IllegalArgumentException("Formato de imagen no compatible")
+                    drawing.addImportedImage(bitmap)
+                    scheduleAutosave()
+                    Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
                 }
-                row.addView(swatch, LinearLayout.LayoutParams(0, dp(66), 1f).apply {
-                    setMargins(dp(3), dp(3), dp(3), dp(3))
-                })
-            }
-            content.addView(row)
+            } catch (e: Exception) { Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show() }
         }
-        paletteDialog = AlertDialog.Builder(this)
-            .setTitle("Color del pincel")
-            .setView(content)
-            .setNegativeButton("Cerrar", null)
-            .create()
-        paletteDialog?.show()
     }
 
     private fun simpleSeekListener(onChanged: () -> Unit) =
@@ -1292,13 +1289,17 @@ class TimelineView(context: android.content.Context) : View(context) {
         paint.color = Color.rgb(160, 174, 190)
         paint.textSize = 11f * density
         paint.strokeWidth = 1f * density
-        var second = 0
         val totalSeconds = ceil(contentDurationMs() / 1000f).toInt()
+        val step = when { pixelsPerSecond >= 110f -> 1; pixelsPerSecond >= 55f -> 5; else -> 10 }
+        var second = 0
         while (second <= totalSeconds) {
             val x = leftMargin + second * pixelsPerSecond
-            canvas.drawLine(x, rulerHeight - 5f * density, x, rulerHeight, paint)
-            if (second % 2 == 0) canvas.drawText("${second}s", x + 3f * density, 10f * density, paint)
-            second++
+            canvas.drawLine(x, rulerHeight - 7f * density, x, rulerHeight, paint)
+            if (second % step == 0) {
+                val label = String.format(java.util.Locale.US, "%02d:%02d", second / 60, second % 60)
+                canvas.drawText(label, x + 3f * density, 17f * density, paint)
+            }
+            second += 1
         }
     }
 
@@ -1446,6 +1447,68 @@ class TimelineView(context: android.content.Context) : View(context) {
         String.format(java.util.Locale.US, "%.2f s", ms / 1000f)
 }
 
+private class HueSatValPickerView(
+    context: android.content.Context,
+    initialHue: Float,
+    initialSaturation: Float,
+    initialValue: Float,
+    private val onColorChanged: (Float, Float, Float) -> Unit
+) : View(context) {
+    private var hue = initialHue
+    private var saturation = initialSaturation
+    private var value = initialValue
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val density = resources.displayMetrics.density
+    private var cx = 0f
+    private var cy = 0f
+    private var radius = 0f
+    private var square = RectF()
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        cx = width / 2f; cy = height / 2f
+        radius = min(width, height) * 0.46f
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 27f * density
+        paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN, Color.GREEN, Color.YELLOW, Color.RED), null)
+        canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
+        paint.shader = null
+        val half = radius * 0.57f
+        square = RectF(cx-half, cy-half, cx+half, cy+half)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.HSVToColor(floatArrayOf(hue,1f,1f))
+        canvas.drawRect(square, paint)
+        paint.shader = LinearGradient(square.left, square.top, square.right, square.top, Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        canvas.drawRect(square, paint); paint.shader = null
+        paint.shader = LinearGradient(square.left, square.top, square.left, square.bottom, Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
+        canvas.drawRect(square, paint); paint.shader = null
+        val sx = square.left + saturation * square.width()
+        val sy = square.bottom - value * square.height()
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f*density; paint.color = Color.WHITE
+        canvas.drawCircle(sx, sy, 7f*density, paint)
+        val angle = Math.toRadians(hue.toDouble())
+        val hx = cx + kotlin.math.cos(angle).toFloat() * (radius - 13f*density)
+        val hy = cy + kotlin.math.sin(angle).toFloat() * (radius - 13f*density)
+        paint.color = Color.WHITE; paint.strokeWidth = 3f*density
+        canvas.drawCircle(hx,hy,13f*density,paint)
+        paint.style = Paint.Style.FILL; paint.color = Color.HSVToColor(floatArrayOf(hue,saturation,value))
+        canvas.drawCircle(hx,hy,10f*density,paint)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_DOWN && event.actionMasked != MotionEvent.ACTION_MOVE) return true
+        val dx = event.x-cx; val dy=event.y-cy
+        if (square.contains(event.x,event.y)) {
+            saturation=((event.x-square.left)/square.width()).coerceIn(0f,1f)
+            value=(1f-(event.y-square.top)/square.height()).coerceIn(0f,1f)
+        } else {
+            var degrees=Math.toDegrees(kotlin.math.atan2(dy.toDouble(),dx.toDouble())).toFloat()
+            if (degrees<0f) degrees+=360f
+            hue=degrees
+        }
+        invalidate(); onColorChanged(hue,saturation,value); return true
+    }
+}
+
 private data class Stroke(
     val points: MutableList<PointF>,
     val widths: MutableList<Float>,
@@ -1461,6 +1524,11 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var current: Stroke? = null
     private var color = Color.BLACK
     private var brush = 4f
+    private var eraserBrush = 20f
+    private val importedImages = mutableMapOf<Int, Bitmap>()
+    private var hue = 0f
+    private var saturation = 1f
+    private var value = 0f
     private var brushOpacity = 255
     private var pressureSensitivity = true
     private var eraser = false
@@ -1493,18 +1561,34 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun clearProject() {
         frames.clear()
         notes.clear()
+        importedImages.clear()
         current = null
         invalidate()
         onChanged?.invoke()
     }
     fun setEraser(value: Boolean) { eraser = value }
-    fun setColor(value: Int) { color = value; eraser = false }
-    fun changeBrush(delta: Float) { brush = (brush + delta).coerceIn(1f, 40f) }
-    fun brushSize(): Float = brush
+    fun isEraser(): Boolean = eraser
+    fun activeBrushSize(): Float = if (eraser) eraserBrush else brush
+    fun setActiveBrushSize(size: Float) { if (eraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
+    fun setColor(value: Int) { color = value; eraser = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
+    fun currentColor(): Int = Color.HSVToColor(floatArrayOf(hue,saturation,value))
+    fun currentHue() = hue
+    fun currentSaturation() = saturation*100f
+    fun currentValue() = value*100f
+    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; invalidate() }
+    fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
+    fun brushSize(): Float = activeBrushSize()
+    fun addImportedImage(bitmap: Bitmap) {
+        val maxW=1920; val maxH=1080
+        val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
+        val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
+        val fitted=Bitmap.createScaledBitmap(bitmap,w,h,true)
+        importedImages.put(frame,fitted); invalidate(); onChanged?.invoke()
+    }
     fun brushOpacity(): Int = (brushOpacity * 100 / 255).coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
     fun configureBrush(size: Float, opacity: Int, pressure: Boolean) {
-        brush = size.coerceIn(1f, 40f)
+        setActiveBrushSize(size)
         brushOpacity = opacity.coerceIn(0, 255)
         pressureSensitivity = pressure
     }
@@ -1521,6 +1605,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun clear() {
         strokes().clear()
         notes[frame]?.clear()
+        importedImages.remove(frame)
         invalidate()
         onChanged?.invoke()
     }
@@ -1537,6 +1622,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         shiftFramesForInsert(target)
         if (sourceStrokes != null) frames[target] = sourceStrokes
         if (sourceNotes != null) notes[target] = sourceNotes
+        importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
     }
 
     private fun cloneStrokes(source: List<Stroke>) = source.map { s ->
@@ -1553,6 +1639,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.forEach { (key, value) -> newFrames[if (key >= at) key + 1 else key] = value }
         frames.clear()
         frames.putAll(newFrames)
+        val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> shiftedImages[if(k>=at) k+1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
         notes.clear()
@@ -1564,6 +1651,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.forEach { (key, value) -> if (key != index) newFrames[if (key > index) key - 1 else key] = value }
         frames.clear()
         frames.putAll(newFrames)
+        val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> if(k!=index) shiftedImages[if(k>index) k-1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
         notes.clear()
@@ -1573,7 +1661,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun moveFrame(from: Int, to: Int) {
         if (from == to) return
-        val allKeys = (frames.keys + notes.keys).toSet()
+        val allKeys = (frames.keys + notes.keys + importedImages.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         allKeys.forEach { old ->
@@ -1587,6 +1675,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             notes[old]?.let { newNotes[new] = it }
         }
         frames.clear(); frames.putAll(newFrames)
+        val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
         invalidate()
     }
@@ -1613,6 +1702,11 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val bg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL }
         canvas.drawRect(0f, 0f, 1920f, 1080f, bg)
+        importedImages[frame]?.let { image ->
+            val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f, (1920+image.width)/2f, (1080+image.height)/2f)
+            canvas.drawBitmap(image, null, dst, imagePaint)
+        }
         for (stroke in frames[frame].orEmpty()) drawStroke(canvas, stroke)
         var y = 1030f
         for (note in notes[frame].orEmpty()) {
@@ -1822,7 +1916,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                     Color.blue(color)
                 )
                 val initialPressure = event.pressure.coerceIn(0.05f, 1f)
-                val initialWidth = if (pressureSensitivity) brush * (0.18f + initialPressure * initialPressure * 1.12f) else brush
+                val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
                 current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 strokes().add(current!!)
                 invalidate()
@@ -1845,7 +1939,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                                     val curved = pressure * pressure
                                     0.18f + curved * 1.12f
                                 } else 1f
-                                stroke.widths.add((brush * pressureFactor).coerceAtLeast(0.5f))
+                                stroke.widths.add((activeBrushSize() * pressureFactor).coerceAtLeast(0.5f))
                             }
                         }
                     }
@@ -1874,11 +1968,13 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun toJson(): JSONObject {
         val root = JSONObject()
         root.put("brushSize", brush.toDouble())
+        root.put("eraserSize", eraserBrush.toDouble())
+        root.put("hue", hue.toDouble()); root.put("saturation", saturation.toDouble()); root.put("value", value.toDouble())
         root.put("brushColor", color)
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
-        val indices = (frames.keys + notes.keys).toSet().sorted()
+        val indices = (frames.keys + notes.keys + importedImages.keys).toSet().sorted()
         indices.forEach { index ->
             val frameObject = JSONObject()
             frameObject.put("index", index)
@@ -1899,6 +1995,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 strokeArray.put(strokeObject)
             }
             frameObject.put("strokes", strokeArray)
+            importedImages[index]?.let { bitmap ->
+                val bytes = java.io.ByteArrayOutputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out); out.toByteArray() }
+                frameObject.put("importedImage", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            }
             val noteArray = JSONArray()
             notes[index].orEmpty().forEach { noteArray.put(it) }
             frameObject.put("notes", noteArray)
@@ -1911,8 +2011,15 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun loadJson(root: JSONObject) {
         frames.clear()
         notes.clear()
-        brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 40f)
+        importedImages.clear()
+        brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
+        eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
         color = root.optInt("brushColor", Color.BLACK)
+        if (root.has("hue") && root.has("saturation") && root.has("value")) {
+            hue=root.optDouble("hue",0.0).toFloat(); saturation=root.optDouble("saturation",1.0).toFloat(); value=root.optDouble("value",0.0).toFloat()
+        } else {
+            val hsv=FloatArray(3); Color.colorToHSV(color,hsv); hue=hsv[0]; saturation=hsv[1]; value=hsv[2]
+        }
         brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
         val array = root.optJSONArray("frames") ?: JSONArray()
@@ -1936,6 +2043,11 @@ class DrawingView(context: android.content.Context) : View(context) {
                 )
             }
             if (loadedStrokes.isNotEmpty()) frames[index] = loadedStrokes
+            val imageData = frameObject.optString("importedImage", "")
+            if (imageData.isNotBlank()) try {
+                val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.let { importedImages[index] = it }
+            } catch (_: Exception) { }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             val loadedNotes = mutableListOf<String>()
             for (k in 0 until noteArray.length()) loadedNotes.add(noteArray.optString(k))
