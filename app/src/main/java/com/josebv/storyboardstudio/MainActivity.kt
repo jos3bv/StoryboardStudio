@@ -235,7 +235,7 @@ class MainActivity : Activity() {
 
         val swatchWrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(2), 0, dp(2))
+            setPadding(0, dp(0), 0, dp(6))
         }
         recentColorContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
+                setMargins(dp(0.1f), dp(0.1f), dp(0.1f), dp(0.1f))
             })
         }
 
@@ -336,7 +336,7 @@ class MainActivity : Activity() {
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
         toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
-            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
+            setMargins(dp(0.1f), dp(0.1f), dp(0.1f), dp(0.1f))
         })
 
         val exportSpacer = View(this)
@@ -395,7 +395,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
-        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.17f))
+        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
@@ -750,7 +750,7 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
-                setMargins(dp(1), 0, dp(1), 0)
+                setMargins(dp(0), 1, dp(0), 1)
             })
         }
     }
