@@ -230,7 +230,7 @@ class MainActivity : Activity() {
         }
         inlineColorPicker = picker
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.05f).apply {
-            setMargins(0, dp(2), 0, dp(2))
+            setMargins(0, dp(1), 0, dp(1))
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -257,11 +257,11 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
-                setMargins(dp(1), 0, dp(1), 0)
+            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                setMargins(dp(1), 1, dp(1), 1)
             })
         }
-        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
+        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(42)))
         sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(42)))
         refreshRecentColorSwatches()
 
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(1), dp(1), dp(1), dp(1))
+                setMargins(dp(.2), dp(.2), dp(.2), dp(.2))
             })
         }
 
@@ -372,7 +372,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(1), dp(1), dp(1), dp(1))
+                setMargins(dp(.2), dp(.2), dp(.2), dp(.2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
