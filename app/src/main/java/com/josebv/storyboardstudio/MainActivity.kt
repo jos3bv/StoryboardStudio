@@ -256,8 +256,8 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                setMargins(dp(2), 0, dp(2), 0)
+            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(22), 1f).apply {
+                setMargins(dp(1), 0, dp(1), 0)
             })
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(22)))
@@ -303,7 +303,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(0, dp(2), dp(2), dp(2))
+                setMargins(dp(1), dp(2), dp(1), dp(2))
             })
         }
 
@@ -365,7 +365,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                setMargins(0, dp(2), dp(2), dp(2))
+                setMargins(dp(1), dp(2), dp(1), dp(2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -505,7 +505,7 @@ class MainActivity : Activity() {
                 timelineView.setZoomProgress(progress)
             })
         }
-        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(32), 1f).apply {
+        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
@@ -559,7 +559,30 @@ class MainActivity : Activity() {
         timelineScroll.addView(timelineView, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, dp(178)
         ))
-        timelinePanel.addView(timelineScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val timelineContent = FrameLayout(this)
+        timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
+        val replaceAudioButton = Button(this).apply {
+            text = "↻"
+            contentDescription = "Reemplazar audio"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            minWidth = 0
+            minimumWidth = 0
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            background = android.graphics.drawable.ColorDrawable(Color.argb(185, 42, 48, 54))
+            elevation = 0f
+            stateListAnimator = null
+            setOnClickListener { chooseAudio() }
+        }
+        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(28), dp(26),
+            Gravity.BOTTOM or Gravity.LEFT).apply {
+            leftMargin = dp(4)
+            bottomMargin = dp(3)
+        })
+        timelinePanel.addView(timelineContent, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(timelinePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
         applySystemTypeface(root)
@@ -692,7 +715,7 @@ class MainActivity : Activity() {
             setOnClickListener { action() }
         }
         parent.addView(button, LinearLayout.LayoutParams(-2, dp(40)).apply {
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
             setMargins(dp(3), 0, dp(3), 0)
         })
         return button
@@ -718,8 +741,8 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            row.addView(chip, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                setMargins(dp(2), 0, dp(2), 0)
+            row.addView(chip, LinearLayout.LayoutParams(0, dp(22), 1f).apply {
+                setMargins(dp(1), 0, dp(1), 0)
             })
         }
     }
@@ -950,13 +973,26 @@ class MainActivity : Activity() {
     }
 
     private fun addTextNote() {
-        val input = EditText(this).apply { hint = "Escribe una nota o diálogo" }
-        AlertDialog.Builder(this).setTitle("Añadir anotación").setView(input)
+        val input = EditText(this).apply {
+            hint = "Texto descriptivo del plano"
+            setText(drawing.currentNote())
+            setSelection(text.length)
+        }
+        AlertDialog.Builder(this).setTitle("Editar texto del plano").setView(input)
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Añadir") { _, _ ->
-                val value = input.text.toString().trim()
-                if (value.isNotEmpty()) { drawing.addText(value); scheduleAutosave() }
-            }.show()
+            .setPositiveButton("Guardar") { _, _ ->
+                drawing.setFrameText(input.text.toString().trim(), drawing.currentColor())
+                scheduleAutosave()
+            }
+            .setNeutralButton("Quitar texto", null)
+            .show()
+            .also { dialog ->
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                    drawing.setFrameText("", drawing.currentColor())
+                    scheduleAutosave()
+                    dialog.dismiss()
+                }
+            }
     }
 
     private fun showBrushColorPalette() {
@@ -2165,8 +2201,6 @@ private class VerticalSliderView(
         paint.color = Color.rgb(190, 190, 190)
         canvas.drawRoundRect(cx - 4f * density, y - 14f * density, cx + 4f * density,
             y + 14f * density, 4f * density, 4f * density, paint)
-        paint.color = Color.WHITE
-        canvas.drawCircle(cx, y, thumbRadius, paint)
         paint.textAlign = Paint.Align.LEFT
         paint.textSize = 9f * density
         paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
@@ -2223,6 +2257,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     private val redoFrames = mutableMapOf<Int, MutableList<Stroke>>()
     private val notes = mutableMapOf<Int, MutableList<String>>()
+    private val noteColors = mutableMapOf<Int, Int>()
     private var frame = 0
     private var current: Stroke? = null
     private var color = Color.BLACK
@@ -2285,10 +2320,11 @@ class DrawingView(context: android.content.Context) : View(context) {
             if (stroke !== current) drawStroke(cacheCanvas, stroke)
         }
         var noteY = 1030f
-        for (note in notes[frame].orEmpty()) {
+        notes[frame]?.firstOrNull()?.let { note ->
             textPaint.textSize = 34f
+            textPaint.color = noteColors[frame] ?: Color.DKGRAY
             cacheCanvas.drawText(note, 24f, noteY, textPaint)
-            noteY -= 42f
+            textPaint.color = Color.DKGRAY
         }
         renderedFrameCache[frame] = bitmap
         while (renderedFrameCache.size > 3) {
@@ -2304,6 +2340,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear()
         redoFrames.clear()
         notes.clear()
+        noteColors.clear()
         importedImages.clear()
         invalidateAllFrameCaches()
         current = null
@@ -2361,15 +2398,24 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun clear() {
         strokes().clear()
         redoFrames.remove(frame)
-        notes[frame]?.clear()
+        notes.remove(frame)
+        noteColors.remove(frame)
         importedImages.remove(frame)
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
     }
 
-    fun addText(value: String) {
-        notes.getOrPut(frame) { mutableListOf() }.add(value)
+    fun currentNote(): String = notes[frame]?.firstOrNull().orEmpty()
+
+    fun setFrameText(value: String, textColor: Int) {
+        if (value.isBlank()) {
+            notes.remove(frame)
+            noteColors.remove(frame)
+        } else {
+            notes[frame] = mutableListOf(value)
+            noteColors[frame] = textColor
+        }
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
@@ -2378,10 +2424,12 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun duplicateFrame(source: Int, target: Int) {
         invalidateAllFrameCaches()
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
-        val sourceNotes = notes[source]?.toMutableList()
+        val sourceNotes = notes[source]?.take(1)?.toMutableList()
+        val sourceNoteColor = noteColors[source]
         shiftFramesForInsert(target)
         if (sourceStrokes != null) frames[target] = sourceStrokes
         if (sourceNotes != null) notes[target] = sourceNotes
+        sourceNoteColor?.let { noteColors[target] = it }
         importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
     }
 
@@ -2404,6 +2452,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
         notes.clear()
         notes.putAll(newNotes)
+        val shiftedNoteColors = mutableMapOf<Int, Int>()
+        noteColors.forEach { (key, value) -> shiftedNoteColors[if (key >= at) key + 1 else key] = value }
+        noteColors.clear()
+        noteColors.putAll(shiftedNoteColors)
     }
 
     fun removeFrame(index: Int) {
@@ -2417,6 +2469,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
         notes.clear()
         notes.putAll(newNotes)
+        val shiftedNoteColors = mutableMapOf<Int, Int>()
+        noteColors.forEach { (key, value) -> if (key != index) shiftedNoteColors[if (key > index) key - 1 else key] = value }
+        noteColors.clear()
+        noteColors.putAll(shiftedNoteColors)
         invalidate()
     }
 
@@ -2439,6 +2495,17 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear(); frames.putAll(newFrames)
         val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
+        val movedNoteColors = mutableMapOf<Int, Int>()
+        noteColors.forEach { (old, value) ->
+            val new = when {
+                old == from -> to
+                from < to && old in (from + 1)..to -> old - 1
+                from > to && old in to until from -> old + 1
+                else -> old
+            }
+            movedNoteColors[new] = value
+        }
+        noteColors.clear(); noteColors.putAll(movedNoteColors)
         invalidate()
     }
 
@@ -2753,8 +2820,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                 frameObject.put("importedImage", Base64.encodeToString(bytes, Base64.NO_WRAP))
             }
             val noteArray = JSONArray()
-            notes[index].orEmpty().forEach { noteArray.put(it) }
+            notes[index]?.firstOrNull()?.let { noteArray.put(it) }
             frameObject.put("notes", noteArray)
+            noteColors[index]?.let { frameObject.put("noteColor", it) }
             frameArray.put(frameObject)
         }
         root.put("frames", frameArray)
@@ -2766,6 +2834,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear()
         redoFrames.clear()
         notes.clear()
+        noteColors.clear()
         importedImages.clear()
         brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
         eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
@@ -2804,9 +2873,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.let { importedImages[index] = it }
             } catch (_: Exception) { }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
-            val loadedNotes = mutableListOf<String>()
-            for (k in 0 until noteArray.length()) loadedNotes.add(noteArray.optString(k))
-            if (loadedNotes.isNotEmpty()) notes[index] = loadedNotes
+            if (noteArray.length() > 0) {
+                notes[index] = mutableListOf(noteArray.optString(0))
+                noteColors[index] = frameObject.optInt("noteColor", Color.DKGRAY)
+            }
         }
         invalidate()
     }
@@ -2814,11 +2884,11 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         canvas.drawColor(Color.WHITE)
         frames[index].orEmpty().forEach { drawStroke(canvas, it) }
-        var y = 1030f
-        notes[index].orEmpty().forEach {
+        notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
-            canvas.drawText(it, 24f, y, textPaint)
-            y -= 42f
+            textPaint.color = noteColors[index] ?: Color.DKGRAY
+            canvas.drawText(it, 24f, 1030f, textPaint)
+            textPaint.color = Color.DKGRAY
         }
     }
 
@@ -2843,11 +2913,11 @@ class DrawingView(context: android.content.Context) : View(context) {
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
         frames[index].orEmpty().forEach { drawStroke(canvas, it) }
-        var y = 1030f
-        notes[index].orEmpty().forEach {
+        notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
-            canvas.drawText(it, 24f, y, textPaint)
-            y -= 42f
+            textPaint.color = noteColors[index] ?: Color.DKGRAY
+            canvas.drawText(it, 24f, 1030f, textPaint)
+            textPaint.color = Color.DKGRAY
         }
         return bitmap
     }

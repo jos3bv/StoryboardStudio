@@ -74,3 +74,13 @@ El cabezal de reproducción se puede arrastrar por toda la duración del audio, 
 - Limpieza de tintes y capas foreground/background heredadas de los botones transparentes con iconos SVG/bitmap.
 - Texto de estado/acciones acercado al nombre de la sesión en el encabezado.
 - Grupos de herramientas de la barra de tiempo con altura uniforme y alineación vertical centrada.
+
+
+## Versión 0.9.13
+- Espaciado uniforme y reducido en las herramientas y botones de exportación del panel izquierdo.
+- Botón compacto para reemplazar el audio desde la esquina inferior izquierda de la pista de audio.
+- Texto descriptivo único por plano: el botón Texto abre el contenido existente para editarlo o reemplazarlo.
+- El texto descriptivo toma el color activo del selector cromático y conserva su color al guardar/cargar, duplicar y mover planos.
+- Manejadores de tamaño y opacidad simplificados: se conserva únicamente el indicador alargado.
+- Historial de colores y escala de grises con bloques de ancho proporcional y márgenes uniformes.
+- Controles de la barra de tiempo alineados al eje vertical central del slider de zoom.
