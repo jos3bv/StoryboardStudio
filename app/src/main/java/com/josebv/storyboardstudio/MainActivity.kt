@@ -432,7 +432,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, dp(10), 0)
         }
-        val shotGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val shotGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
@@ -450,7 +450,7 @@ class MainActivity : Activity() {
             contentDescription = "Plano seleccionado y duración"
         }
         shotGroup.addView(shotLabel, LinearLayout.LayoutParams(dp(118), -1))
-        toolbar.addView(shotGroup, LinearLayout.LayoutParams(0, -1, 4.7f))
+        toolbar.addView(shotGroup, LinearLayout.LayoutParams(-2, -1).apply { gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL })
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(playback, "ic_first_frame", "Ir al inicio") { seekToTimelinePosition(0) }
@@ -462,7 +462,7 @@ class MainActivity : Activity() {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
-        toolbar.addView(playback, LinearLayout.LayoutParams(0, -1, 2.7f))
+        toolbar.addView(playback, LinearLayout.LayoutParams(0, -1, 1f))
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
@@ -480,7 +480,7 @@ class MainActivity : Activity() {
             setMargins(dp(4), 0, dp(4), 0)
         })
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") { timelineView.changeZoom(1.25f) }
-        toolbar.addView(zoomGroup, LinearLayout.LayoutParams(0, -1, 2.5f))
+        toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), -1).apply { gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL })
         timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(44)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
@@ -498,12 +498,26 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
+            onBoundaryChanged = { index, firstDuration, secondDuration ->
+                if (index in 0 until frameDurations.lastIndex) {
+                    frameDurations[index] = firstDuration
+                    frameDurations[index + 1] = secondDuration
+                    updateFrameStatus()
+                    updateTimeline()
+                    scheduleAutosave()
+                }
+            }
             onSeek = { position ->
                 if (audioDurationMs > 0) {
                     mediaPlayer?.let { it.seekTo(position.coerceIn(0, max(0, audioDurationMs))) }
                 }
                 val idx = frameAtTime(position)
-                selectFrame(idx, false)
+                if (idx != currentFrame) {
+                    currentFrame = idx
+                    drawing.setFrame(currentFrame)
+                    updateFrameStatus()
+                    timelineView.setSelectedFrame(currentFrame)
+                }
                 timelineView.setPlayhead(position)
             }
             onMoveFrame = { from, to -> moveFrame(from, to) }
@@ -1573,6 +1587,7 @@ class MainActivity : Activity() {
 class TimelineView(context: android.content.Context) : View(context) {
     var onSelectFrame: ((Int) -> Unit)? = null
     var onDurationChanged: ((Int, Int) -> Unit)? = null
+    var onBoundaryChanged: ((Int, Int, Int) -> Unit)? = null
     var onSeek: ((Int) -> Unit)? = null
     var onMoveFrame: ((Int, Int) -> Unit)? = null
     var onRequestAudio: (() -> Unit)? = null
@@ -1638,10 +1653,12 @@ class TimelineView(context: android.content.Context) : View(context) {
     private var downX = 0f
     private var downY = 0f
     private var originalDuration = 0
+    private var originalNextDuration = 0
     private var lastDuration = 0
+    private var lastNextDuration = 0
     private var dragTarget = -1
 
-    private enum class GestureMode { NONE, RESIZE, MOVE }
+    private enum class GestureMode { NONE, RESIZE, MOVE, SCRUB }
 
     fun setData(
         newDurations: List<Int>,
@@ -1853,12 +1870,23 @@ class TimelineView(context: android.content.Context) : View(context) {
                 downX = event.x
                 downY = event.y
                 activeIndex = hitFrame(event.x, event.y)
-                if (activeIndex >= 0) {
+                val playheadX = leftMargin + playheadMs / 1000f * pixelsPerSecond
+                val nearPlayhead = kotlin.math.abs(event.x - playheadX) <= 18f * density
+
+                // The audio lane and playhead handle always scrub the complete audio duration,
+                // including sections where no storyboard card exists.
+                if (nearPlayhead || event.y in audioTop..(audioTop + audioHeight) || event.y <= rulerHeight) {
+                    gestureMode = GestureMode.SCRUB
+                    seekFromTimelineX(event.x)
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                } else if (activeIndex >= 0) {
                     val rect = frameRect(activeIndex)
                     if (event.x >= rect.right - handleWidth * 1.4f) {
                         gestureMode = GestureMode.RESIZE
                         originalDuration = durations[activeIndex]
+                        originalNextDuration = durations.getOrElse(activeIndex + 1) { 0 }
                         lastDuration = originalDuration
+                        lastNextDuration = originalNextDuration
                         parent?.requestDisallowInterceptTouchEvent(true)
                     } else if (event.x <= rect.left + 16f * density) {
                         gestureMode = GestureMode.MOVE
@@ -1868,20 +1896,34 @@ class TimelineView(context: android.content.Context) : View(context) {
                         gestureMode = GestureMode.NONE
                         onSelectFrame?.invoke(activeIndex)
                     }
-                } else if (event.y in audioTop..(audioTop + audioHeight) && audioDurationMs <= 0) {
-                    onRequestAudio?.invoke()
-                } else if (event.y <= rulerHeight || event.y in audioTop..(audioTop + audioHeight)) {
-                    val ms = ((event.x - leftMargin) / pixelsPerSecond * 1000f).toInt().coerceAtLeast(0)
-                    onSeek?.invoke(ms)
                 }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 when (gestureMode) {
+                    GestureMode.SCRUB -> seekFromTimelineX(event.x)
                     GestureMode.RESIZE -> {
                         val deltaMs = ((event.x - downX) / pixelsPerSecond * 1000f).toInt()
-                        val newDuration = (originalDuration + deltaMs).coerceAtLeast(100)
-                        if (newDuration != lastDuration) {
+                        val minDuration = 100
+                        val newDuration = (originalDuration + deltaMs).coerceAtLeast(minDuration)
+                        if (activeIndex < durations.lastIndex) {
+                            // Move only the cut between these two shots: the next shot's end
+                            // and every later shot's absolute position remain fixed.
+                            val minimumNext = min(500, originalNextDuration)
+                            val transitionLimit = max(0, originalNextDuration - minimumNext)
+                            val boundedDelta = deltaMs.coerceAtLeast(minDuration - originalDuration)
+                            val adjustedCurrent = originalDuration + boundedDelta
+                            val adjustedNext = if (boundedDelta > transitionLimit) {
+                                minimumNext
+                            } else {
+                                originalNextDuration - boundedDelta
+                            }
+                            if (adjustedCurrent != lastDuration || adjustedNext != lastNextDuration) {
+                                lastDuration = adjustedCurrent
+                                lastNextDuration = adjustedNext
+                                onBoundaryChanged?.invoke(activeIndex, adjustedCurrent, adjustedNext)
+                            }
+                        } else if (newDuration != lastDuration) {
                             lastDuration = newDuration
                             onDurationChanged?.invoke(activeIndex, newDuration)
                         }
@@ -1896,6 +1938,7 @@ class TimelineView(context: android.content.Context) : View(context) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (gestureMode == GestureMode.SCRUB) seekFromTimelineX(event.x)
                 if (gestureMode == GestureMode.MOVE && activeIndex >= 0 && dragTarget >= 0 && dragTarget != activeIndex) {
                     onMoveFrame?.invoke(activeIndex, dragTarget)
                 }
@@ -1906,6 +1949,15 @@ class TimelineView(context: android.content.Context) : View(context) {
             }
         }
         return true
+    }
+
+    private fun seekFromTimelineX(x: Float) {
+        val maximum = max(audioDurationMs, durations.sum())
+        val position = ((x - leftMargin) / pixelsPerSecond * 1000f)
+            .toInt().coerceIn(0, maximum.coerceAtLeast(0))
+        playheadMs = position
+        onSeek?.invoke(position)
+        invalidate()
     }
 
     private fun frameRect(index: Int): RectF {
