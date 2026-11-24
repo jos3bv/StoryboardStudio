@@ -575,7 +575,7 @@ class MainActivity : Activity() {
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(child.paddingLeft, dp(5), child.paddingRight, 0)
+                    child.setPadding(child.paddingLeft, dp(3), child.paddingRight, 0)
                     child.gravity = Gravity.CENTER
                 }
             }
