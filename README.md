@@ -67,3 +67,10 @@ El cabezal de reproducción se puede arrastrar por toda la duración del audio, 
 - Exportaciones dirigidas a Documentos/Storyboarder/Exports/PNG y /PDF.
 - Guardado y apertura de sesiones centralizados en Documentos/Storyboarder/sessions.
 - Importación de imágenes mediante el selector de imágenes del dispositivo.
+
+
+## Versión 0.9.12
+- Menor separación horizontal entre botones de herramientas y exportación del panel izquierdo, igualada al margen vertical.
+- Limpieza de tintes y capas foreground/background heredadas de los botones transparentes con iconos SVG/bitmap.
+- Texto de estado/acciones acercado al nombre de la sesión en el encabezado.
+- Grupos de herramientas de la barra de tiempo con altura uniforme y alineación vertical centrada.

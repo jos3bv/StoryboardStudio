@@ -178,20 +178,21 @@ class MainActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), 0, dp(8), 0)
+            setPadding(dp(8), 0, dp(3), 0)
+            maxWidth = dp(260)
             setOnClickListener { editProjectName() }
             contentDescription = "Nombre de la sesión. Toca para cambiarlo."
         }
-        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, -1, 1.0f))
+        top.addView(projectTitleLabel, LinearLayout.LayoutParams(-2, -1))
         status = TextView(this).apply {
             setTextColor(Color.rgb(195, 205, 215))
             textSize = 10f
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), 0, dp(8), 0)
+            setPadding(0, 0, dp(8), 0)
         }
-        top.addView(status, LinearLayout.LayoutParams(0, -1, 1.05f))
+        top.addView(status, LinearLayout.LayoutParams(0, -1, 1f))
         val brand = TextView(this).apply {
             text = "BV’StoryboardStudio"
             setTextColor(Color.WHITE)
@@ -302,7 +303,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(0, dp(2), dp(4), dp(2))
+                setMargins(0, dp(2), dp(2), dp(2))
             })
         }
 
@@ -331,7 +332,7 @@ class MainActivity : Activity() {
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(48)))
         toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(48)))
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(96)).apply {
-            setMargins(0, dp(8), 0, dp(5))
+            setMargins(0, dp(4), 0, dp(4))
         })
 
         val exportSpacer = View(this)
@@ -364,7 +365,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                setMargins(0, dp(2), dp(4), dp(2))
+                setMargins(0, dp(2), dp(2), dp(2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -453,7 +454,10 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, dp(10), 0)
         }
-        val shotGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val shotGroup = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
@@ -471,7 +475,9 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
         addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
-        toolbar.addView(shotGroup, LinearLayout.LayoutParams(-2, -1).apply { gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL })
+        toolbar.addView(shotGroup, LinearLayout.LayoutParams(-2, dp(40)).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        })
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(playback, "ic_first_frame", "Ir al inicio") { seekToTimelinePosition(0) }
@@ -483,7 +489,9 @@ class MainActivity : Activity() {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
-        toolbar.addView(playback, LinearLayout.LayoutParams(0, -1, 1f))
+        toolbar.addView(playback, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        })
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
@@ -497,12 +505,14 @@ class MainActivity : Activity() {
                 timelineView.setZoomProgress(progress)
             })
         }
-        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(32), 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") { timelineView.changeZoom(1.25f) }
-        toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), -1).apply { gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL })
+        toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        })
         timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(44)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
@@ -606,8 +616,11 @@ class MainActivity : Activity() {
         button.stateListAnimator = null
         button.elevation = 0f
         if (transparent) {
-            button.background = null
-            button.setBackgroundColor(Color.TRANSPARENT)
+            button.backgroundTintList = null
+            button.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            button.foreground = null
+            button.stateListAnimator = null
+            button.elevation = 0f
         }
     }
 
