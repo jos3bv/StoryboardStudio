@@ -307,7 +307,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(6), dp(5), dp(1), dp(1))
+                setMargins(dp(1), dp(1), dp(1), dp(1))
             })
         }
 
@@ -336,7 +336,7 @@ class MainActivity : Activity() {
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(56)))
         toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(56)))
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
-            setMargins(0, dp(2), 0, dp(2))
+            setMargins(0, dp(1), 0, dp(1))
         })
 
         val exportSpacer = View(this)
@@ -372,7 +372,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(6), dp(2), dp(1), dp(1))
+                setMargins(dp(1), dp(1), dp(1), dp(1))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
