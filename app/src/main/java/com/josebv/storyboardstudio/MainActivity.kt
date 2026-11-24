@@ -321,7 +321,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             // Buttons touch directly: no margins or added gaps.
-            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
+            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
         }
 
         addToolCell(toolRow1, tool("ic_pencil", "Lápiz") {
@@ -382,7 +382,7 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
+            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
@@ -423,7 +423,7 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
+            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
@@ -474,6 +474,7 @@ class MainActivity : Activity() {
             sliderRail,
             FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT or Gravity.TOP).apply {
                 leftMargin = 0
+                rightMargin = 0
                 topMargin = dp(2)
                 bottomMargin = dp(2)
             }
@@ -543,7 +544,7 @@ class MainActivity : Activity() {
         addIconCompactButton(playback, "ic_previous_frame", "Plano anterior") {
             stopPlayback(); selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar") { toggleAudio() }
+        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 32) { toggleAudio() }
         addIconCompactButton(playback, "ic_next_frame", "Plano siguiente") {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
@@ -579,7 +580,7 @@ class MainActivity : Activity() {
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(child.paddingLeft, dp(4), child.paddingRight, 0)
+                    child.setPadding(child.paddingLeft, dp(5), child.paddingRight, 0)
                     child.gravity = Gravity.CENTER
                 }
             }
@@ -2521,7 +2522,7 @@ private class VerticalSliderView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val cx = 8f * density
+        val cx = 6f * density
         val top = 15f * density
         val bottom = height - 15f * density
         paint.color = Color.rgb(135, 135, 135)
