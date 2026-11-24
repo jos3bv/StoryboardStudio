@@ -309,7 +309,7 @@ class MainActivity : Activity() {
                 minimumHeight = 0
                 stateListAnimator = null
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 56)
+                setButtonIcon(this, iconName, 52)
             }
         }
 
@@ -394,7 +394,7 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 56)
+                setButtonIcon(this, iconName, 52)
             }
             imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
                 setMargins(0, 0, 0, 0)
@@ -440,7 +440,7 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 56)
+                setButtonIcon(this, iconName, 52)
             }
             exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
                 setMargins(0, 0, 0, 0)
@@ -527,7 +527,7 @@ class MainActivity : Activity() {
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, dp(10), 0)
         }
         val shotGroup = LinearLayout(this).apply {
@@ -566,7 +566,7 @@ class MainActivity : Activity() {
         addIconCompactButton(playback, "ic_previous_frame", "Plano anterior") {
             stopPlayback(); selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 32) { toggleAudio() }
+        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 28) { toggleAudio() }
         addIconCompactButton(playback, "ic_next_frame", "Plano siguiente") {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
@@ -587,7 +587,7 @@ class MainActivity : Activity() {
                 timelineView.setZoomProgress(progress)
             })
         }
-        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(32), 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
@@ -597,7 +597,7 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        // All toolbar groups and controls share the same 40 dp row and true center alignment.
+        // The 40 dp control groups are vertically centered inside a 52 dp toolbar row.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
             for (i in 0 until group.childCount) {
@@ -609,7 +609,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(52)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
