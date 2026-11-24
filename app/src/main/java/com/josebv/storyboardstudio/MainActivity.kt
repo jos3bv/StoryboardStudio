@@ -115,7 +115,10 @@ class MainActivity : Activity() {
     }
 
     private fun buildInterface() {
-        drawing = DrawingView(this).apply { onChanged = { scheduleAutosave() } }
+        drawing = DrawingView(this).apply {
+            onChanged = { scheduleAutosave() }
+            onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
+        }
         if (recentColors.isEmpty()) {
             recentColors.addAll(listOf(
                 Color.rgb(48, 160, 235), Color.rgb(73, 190, 40), Color.rgb(112, 95, 220),
@@ -136,7 +139,8 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(65, 65, 65))
             setPadding(0, 0, dp(10), 0)
         }
-        addHeaderButton(top, "Archivo", dp(120)) { showSessionDialog() }
+        val archivoButton = addHeaderButton(top, "Archivo", dp(120)) { }
+        archivoButton.setOnClickListener { showArchivoPopup(archivoButton) }
         addHeaderButton(top, "Guardar", dp(98)) { saveProject() }
         projectTitleLabel = TextView(this).apply {
             text = projectName
@@ -149,16 +153,23 @@ class MainActivity : Activity() {
             setOnClickListener { editProjectName() }
             contentDescription = "Nombre de la sesión. Toca para cambiarlo."
         }
-        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, -1, 1f))
+        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, -1, 1.25f))
+        val headerHistory = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        addCanvasIconButton(headerHistory, "ic_undo", "Deshacer") { drawing.undo() }
+        addCanvasIconButton(headerHistory, "ic_redo", "Rehacer") { drawing.redo() }
+        top.addView(headerHistory, LinearLayout.LayoutParams(-2, -1))
         val brand = TextView(this).apply {
             text = "BV’StoryboardStudio"
             setTextColor(Color.WHITE)
             textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             setPadding(0, 0, dp(4), 0)
         }
-        top.addView(brand, LinearLayout.LayoutParams(0, -1, 1f))
+        top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.8f))
         root.addView(top, LinearLayout.LayoutParams(-1, dp(50)))
 
         // Work area: left tool panel and a large central canvas.
@@ -170,24 +181,23 @@ class MainActivity : Activity() {
         val sidebar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.rgb(67, 67, 67))
-            setPadding(dp(5), dp(5), dp(2), dp(5))
+            setPadding(0, dp(3), 0, dp(3))
         }
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(dp(4), dp(4), dp(3), dp(3))
+            setPadding(dp(2), dp(2), dp(2), dp(2))
         }
 
         val picker = HueSatValPickerView(
             this, drawing.currentHue(), drawing.currentSaturation() / 100f, drawing.currentValue() / 100f
         ) { h, sat, v ->
             drawing.setColorFromHsv(h, sat, v)
-            rememberRecentColor(drawing.currentColor())
             scheduleAutosave()
         }
         inlineColorPicker = picker
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.42f).apply {
-            setMargins(0, dp(5), 0, dp(5))
+            setMargins(0, dp(2), 0, dp(2))
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -210,7 +220,6 @@ class MainActivity : Activity() {
                 setBackgroundColor(color)
                 setOnClickListener {
                     drawing.setColor(color)
-                    rememberRecentColor(color)
                     picker.setColor(color)
                     scheduleAutosave()
                 }
@@ -237,7 +246,9 @@ class MainActivity : Activity() {
                 textSize = 20f
                 isAllCaps = false
                 setTextColor(Color.LTGRAY)
-                setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
+                background = null
+                elevation = 0f
+                stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 minWidth = 0
                 minimumWidth = 0
@@ -314,7 +325,9 @@ class MainActivity : Activity() {
                 minWidth = 0
                 minimumWidth = 0
                 setTextColor(Color.LTGRAY)
-                setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
+                background = null
+                elevation = 0f
+                stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
@@ -343,7 +356,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
-        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.148f))
+        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.17f))
 
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
@@ -358,21 +371,11 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(22), -1, Gravity.LEFT or Gravity.TOP).apply {
-                leftMargin = dp(4)
-                topMargin = dp(4)
-                bottomMargin = dp(4)
+                leftMargin = 0
+                topMargin = dp(2)
+                bottomMargin = dp(2)
             }
         )
-        val canvasButtons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(5), dp(5), dp(5), dp(5))
-        }
-        addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") { drawing.undo() }
-        addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") { drawing.redo() }
-        canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
-            leftMargin = dp(32)
-            topMargin = dp(18)
-        })
         val centerButton = Button(this).apply {
             text = ""
             contentDescription = "Centrar vista"
@@ -382,20 +385,20 @@ class MainActivity : Activity() {
             setTextColor(Color.LTGRAY)
             setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
             setOnClickListener { drawing.resetViewport() }
-            setButtonIcon(this, "ic_fit_canvas", 34)
+            setButtonIcon(this, "ic_fit_canvas", 34, transparent = false)
         }
         canvasArea.addView(centerButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(32)
             bottomMargin = dp(12)
         })
-        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.852f))
+        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.83f))
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 2.4f))
 
         // Timeline toolbar: shot management left, playback centered, zoom/navigation right.
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(dp(12), dp(5), dp(12), dp(4))
+            setPadding(0, dp(3), 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -415,8 +418,8 @@ class MainActivity : Activity() {
         }
         shotInfo.addView(status)
         shotInfo.addView(durationLabel)
-        shotGroup.addView(shotInfo, LinearLayout.LayoutParams(0, -1, 1f).apply {
-            setMargins(dp(5), 0, dp(4), 0)
+        shotGroup.addView(shotInfo, LinearLayout.LayoutParams(dp(112), -1).apply {
+            setMargins(dp(5), 0, dp(2), 0)
         })
         addIconCompactButton(shotGroup, "ic_duration_down", "Reducir duración") { changeDuration(-500) }
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
@@ -485,12 +488,13 @@ class MainActivity : Activity() {
         timelinePanel.addView(timelineScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(timelinePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        applySystemTypeface(root)
         setContentView(root)
         updateFrameStatus()
         updateTimeline()
     }
 
-    private fun setButtonIcon(button: Button, drawableName: String, sizeDp: Int = 30) {
+    private fun setButtonIcon(button: Button, drawableName: String, sizeDp: Int = 30, transparent: Boolean = true) {
         val resourceId = resources.getIdentifier(drawableName, "drawable", packageName)
         if (resourceId == 0) return
         val bitmap = BitmapFactory.decodeResource(resources, resourceId) ?: return
@@ -502,6 +506,12 @@ class MainActivity : Activity() {
         button.compoundDrawablePadding = 0
         button.gravity = Gravity.CENTER
         button.setPadding(0, 0, 0, 0)
+        button.stateListAnimator = null
+        button.elevation = 0f
+        if (transparent) {
+            button.background = null
+            button.setBackgroundColor(Color.TRANSPARENT)
+        }
     }
 
     private fun addIconCompactButton(
@@ -512,20 +522,23 @@ class MainActivity : Activity() {
         action: () -> Unit
     ): Button {
         val button = addCompactButton(parent, "", description, action)
-        setButtonIcon(button, drawableName, sizeDp)
+        setButtonIcon(button, drawableName, sizeDp, transparent = true)
         return button
     }
 
-    private fun addHeaderButton(parent: LinearLayout, label: String, width: Int, action: () -> Unit) {
+    private fun addHeaderButton(parent: LinearLayout, label: String, width: Int, action: () -> Unit): Button {
         val button = Button(this).apply {
             text = label; isAllCaps = false; textSize = 12f
             setTextColor(Color.WHITE)
-            setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
+            background = android.graphics.drawable.ColorDrawable(Color.rgb(83, 83, 83))
+            setPadding(0, 0, 0, 0)
+            minWidth = 0
+            minimumWidth = 0
+            stateListAnimator = null
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(width, -1).apply {
-            setMargins(0, 0, dp(1), 0)
-        })
+        parent.addView(button, LinearLayout.LayoutParams(width, -1))
+        return button
     }
 
     private fun addCanvasButton(parent: LinearLayout, label: String, description: String, action: () -> Unit) {
@@ -549,7 +562,7 @@ class MainActivity : Activity() {
             setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
             setPadding(0, 0, 0, 0)
             setOnClickListener { action() }
-            setButtonIcon(this, iconName, 34)
+            setButtonIcon(this, iconName, 34, transparent = false)
         }
         parent.addView(button, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
             setMargins(dp(2), dp(2), dp(2), dp(2))
@@ -595,6 +608,16 @@ class MainActivity : Activity() {
             row.addView(chip, LinearLayout.LayoutParams(0, dp(18), 1f).apply {
                 setMargins(dp(1), 0, dp(1), 0)
             })
+        }
+    }
+
+    private fun applySystemTypeface(view: View) {
+        if (view is TextView) {
+            val style = if (view.typeface?.isBold == true) Typeface.BOLD else Typeface.NORMAL
+            view.typeface = Typeface.create("sans-serif", style)
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) applySystemTypeface(view.getChildAt(i))
         }
     }
 
@@ -654,7 +677,7 @@ class MainActivity : Activity() {
             text = label
             setTextColor(Color.rgb(160, 177, 197))
             textSize = 11f
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
             setPadding(3, 4, 3, 4)
         })
     }
@@ -917,7 +940,7 @@ class MainActivity : Activity() {
         }
     }
     private fun extractWaveform(uri: Uri): FloatArray {
-        val bucketCount = 1400
+        val bucketCount = 3200
         val peaks = FloatArray(bucketCount)
         var extractor: MediaExtractor? = null
         var codec: MediaCodec? = null
@@ -1022,11 +1045,13 @@ class MainActivity : Activity() {
                 prepareAsync()
             }
             waveform = FloatArray(0)
+            timelineView.setAudioLoading(true)
             updateTimeline()
             Thread {
                 val extracted = extractWaveform(uri)
                 runOnUiThread {
                     waveform = extracted
+                    timelineView.setAudioLoading(false)
                     updateTimeline()
                 }
             }.start()
@@ -1185,6 +1210,16 @@ class MainActivity : Activity() {
             restoringSession = false
         }
         scheduleAutosave()
+    }
+
+    private fun showArchivoPopup(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add("Guardar copia en la aplicación").setOnMenuItemClickListener { saveLocalSnapshot(); true }
+        popup.menu.add("Abrir sesión guardada").setOnMenuItemClickListener { showLocalSessionsDialog(); true }
+        popup.menu.add("Guardar como archivo…").setOnMenuItemClickListener { saveSessionAsFile(); true }
+        popup.menu.add("Abrir archivo de sesión…").setOnMenuItemClickListener { openSessionFile(); true }
+        popup.menu.add("Crear sesión nueva").setOnMenuItemClickListener { confirmNewSession(); true }
+        popup.show()
     }
 
     private fun showSessionDialog() {
@@ -1501,10 +1536,11 @@ class TimelineView(context: android.content.Context) : View(context) {
     private var inlineColorPicker: HueSatValPickerView? = null
     private var brushSizeSlider: VerticalSliderView? = null
     private var audioDurationMs = 0
+    private var audioLoading = false
     private var playheadMs = 0
     private var pixelsPerSecond = 85f
     private val density = resources.displayMetrics.density
-    private val leftMargin = 18f * density
+    private val leftMargin = 0f
     private val rulerHeight = 22f * density
     private val cardsTop = 29f * density
     private val cardHeight = 68f * density
@@ -1573,6 +1609,11 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
+    fun setAudioLoading(loading: Boolean) {
+        audioLoading = loading
+        invalidate()
+    }
+
     fun setPlayhead(position: Int) {
         playheadMs = position.coerceAtLeast(0)
         invalidate()
@@ -1603,7 +1644,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     private fun contentDurationMs(): Int = max(durations.sum(), audioDurationMs)
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val contentWidth = leftMargin * 2 + contentDurationMs() / 1000f * pixelsPerSecond + 80f * density
+        val contentWidth = contentDurationMs() / 1000f * pixelsPerSecond
         val desiredWidth = max(MeasureSpec.getSize(widthMeasureSpec).toFloat(), contentWidth).toInt()
         val desiredHeight = (178f * density).toInt()
         setMeasuredDimension(resolveSize(desiredWidth, widthMeasureSpec), resolveSize(desiredHeight, heightMeasureSpec))
@@ -1648,12 +1689,12 @@ class TimelineView(context: android.content.Context) : View(context) {
             canvas.drawRect(rect, paint)
             paint.color = Color.WHITE
             paint.textSize = 12f * density
-            paint.typeface = Typeface.DEFAULT
+            paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             val label = "${projectLabel}_${index + 1}"
             canvas.drawText(label, x + 7f * density, cardsTop + 17f * density, paint)
             paint.textSize = 10f * density
             canvas.drawText("PLANO ${index + 1}", x + 7f * density, cardsTop + 31f * density, paint)
-            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             val durationText = String.format(java.util.Locale.US, "%.2fs", duration / 1000f)
             val tw = paint.measureText(durationText)
             canvas.drawText(durationText, x + w - tw - 8f * density, cardsTop + cardHeight - 9f * density, paint)
@@ -1682,7 +1723,20 @@ class TimelineView(context: android.content.Context) : View(context) {
         } else {
             paint.textSize = 11f * density
             paint.color = Color.rgb(180, 193, 183)
-            if (audioDurationMs > 0) {
+            if (audioLoading) {
+                paint.textAlign = Paint.Align.CENTER
+                canvas.drawText("Cargando audio y analizando forma de onda…", width / 2f,
+                    audioTop + audioHeight / 2f - 5f * density, paint)
+                paint.color = Color.rgb(115, 135, 150)
+                canvas.drawRoundRect(RectF(width * 0.30f, audioTop + audioHeight / 2f + 5f * density,
+                    width * 0.70f, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+                paint.color = Color.rgb(40, 170, 210)
+                val progressWidth = ((SystemClock.uptimeMillis() / 8L) % 100L) / 100f * width * 0.40f
+                canvas.drawRoundRect(RectF(width * 0.30f, audioTop + audioHeight / 2f + 5f * density,
+                    width * 0.30f + progressWidth, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+                paint.textAlign = Paint.Align.LEFT
+                postInvalidateDelayed(80)
+            } else if (audioDurationMs > 0) {
                 paint.textAlign = Paint.Align.CENTER
                 canvas.drawText("Generando forma de onda…", width / 2f,
                     audioTop + audioHeight / 2f + 4f * density, paint)
@@ -1842,7 +1896,7 @@ private class HueSatValPickerView(
         paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN, Color.GREEN, Color.YELLOW, Color.RED), null)
         canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
         paint.shader = null
-        val half = radius * 0.57f
+        val half = radius * 0.40f
         square = RectF(cx-half, cy-half, cx+half, cy+half)
         paint.style = Paint.Style.FILL
         paint.color = Color.HSVToColor(floatArrayOf(hue,1f,1f))
@@ -1912,7 +1966,7 @@ private class VerticalSliderView(
         canvas.drawCircle(cx, y, thumbRadius, paint)
         paint.textAlign = Paint.Align.CENTER
         paint.textSize = 9f * density
-        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
         canvas.drawText(shortLabel, cx, 11f * density, paint)
         paint.textSize = 8f * density
         canvas.drawText(value.toString(), cx, height - 1f * density, paint)
@@ -1954,6 +2008,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     var onChanged: (() -> Unit)? = null
+    var onColorUsed: ((Int) -> Unit)? = null
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     private val redoFrames = mutableMapOf<Int, MutableList<Stroke>>()
     private val notes = mutableMapOf<Int, MutableList<String>>()
@@ -1963,6 +2018,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var brush = 4f
     private var eraserBrush = 20f
     private val importedImages = mutableMapOf<Int, Bitmap>()
+    private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
     private var hue = 0f
     private var saturation = 1f
     private var value = 0f
@@ -1985,12 +2041,50 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.DKGRAY
         textSize = 28f
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         style = Paint.Style.FILL
     }
 
     init {
-        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        setLayerType(View.LAYER_TYPE_HARDWARE, null)
         isFocusable = true
+    }
+
+    private fun invalidateFrameCache(index: Int = frame) {
+        renderedFrameCache.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+    }
+
+    private fun invalidateAllFrameCaches() {
+        renderedFrameCache.values.forEach { if (!it.isRecycled) it.recycle() }
+        renderedFrameCache.clear()
+    }
+
+    private fun cachedFrameBitmap(): Bitmap {
+        renderedFrameCache[frame]?.let { if (!it.isRecycled) return it }
+        val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+        val cacheCanvas = Canvas(bitmap)
+        cacheCanvas.drawColor(Color.WHITE)
+        importedImages[frame]?.let { image ->
+            val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f,
+                (1920+image.width)/2f, (1080+image.height)/2f)
+            cacheCanvas.drawBitmap(image, null, dst, imagePaint)
+        }
+        frames[frame].orEmpty().forEach { stroke ->
+            if (stroke !== current) drawStroke(cacheCanvas, stroke)
+        }
+        var noteY = 1030f
+        for (note in notes[frame].orEmpty()) {
+            textPaint.textSize = 34f
+            cacheCanvas.drawText(note, 24f, noteY, textPaint)
+            noteY -= 42f
+        }
+        renderedFrameCache[frame] = bitmap
+        while (renderedFrameCache.size > 3) {
+            val oldestKey = renderedFrameCache.keys.first()
+            invalidateFrameCache(oldestKey)
+        }
+        return bitmap
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
@@ -2000,6 +2094,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         redoFrames.clear()
         notes.clear()
         importedImages.clear()
+        invalidateAllFrameCaches()
         current = null
         invalidate()
         onChanged?.invoke()
@@ -2021,7 +2116,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
         val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
         val fitted=Bitmap.createScaledBitmap(bitmap,w,h,true)
-        importedImages.put(frame,fitted); invalidate(); onChanged?.invoke()
+        importedImages.put(frame,fitted); invalidateFrameCache(); invalidate(); onChanged?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100 / 255).coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
@@ -2036,6 +2131,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (list.isNotEmpty()) {
             val removed = list.removeAt(list.lastIndex)
             redoFrames.getOrPut(frame) { mutableListOf() }.add(removed)
+            invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
         }
@@ -2045,6 +2141,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val stack = redoFrames[frame]
         if (!stack.isNullOrEmpty()) {
             strokes().add(stack.removeAt(stack.lastIndex))
+            invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
         }
@@ -2055,17 +2152,20 @@ class DrawingView(context: android.content.Context) : View(context) {
         redoFrames.remove(frame)
         notes[frame]?.clear()
         importedImages.remove(frame)
+        invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
     }
 
     fun addText(value: String) {
         notes.getOrPut(frame) { mutableListOf() }.add(value)
+        invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
     }
 
     fun duplicateFrame(source: Int, target: Int) {
+        invalidateAllFrameCaches()
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.toMutableList()
         shiftFramesForInsert(target)
@@ -2096,6 +2196,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun removeFrame(index: Int) {
+        invalidateAllFrameCaches()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         frames.forEach { (key, value) -> if (key != index) newFrames[if (key > index) key - 1 else key] = value }
         frames.clear()
@@ -2109,6 +2210,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun moveFrame(from: Int, to: Int) {
+        invalidateAllFrameCaches()
         if (from == to) return
         val allKeys = (frames.keys + notes.keys + importedImages.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
@@ -2149,20 +2251,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.save()
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
-        val bg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL }
-        canvas.drawRect(0f, 0f, 1920f, 1080f, bg)
-        importedImages[frame]?.let { image ->
-            val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f, (1920+image.width)/2f, (1080+image.height)/2f)
-            canvas.drawBitmap(image, null, dst, imagePaint)
-        }
-        for (stroke in frames[frame].orEmpty()) drawStroke(canvas, stroke)
-        var y = 1030f
-        for (note in notes[frame].orEmpty()) {
-            textPaint.textSize = 34f
-            canvas.drawText(note, 24f, y, textPaint)
-            y -= 42f
-        }
+        canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        current?.let { drawStroke(canvas, it) }
         canvas.restore()
 
         val border = Paint().apply {
@@ -2265,7 +2355,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         // Sample the smoothed path and interpolate pressure width along it.
         val measure = PathMeasure(smoothed, false)
         val length = measure.length
-        val samples = max(2, min(2400, (length / 3f).toInt() + 1))
+        val samples = max(2, min(900, (length / 5f).toInt() + 1))
         val position = FloatArray(2)
         val tangent = FloatArray(2)
         var previousPoint: PointF? = null
@@ -2358,6 +2448,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                 if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
                 val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
+                if (!eraseStroke) onColorUsed?.invoke(color)
                 val strokeColor = Color.argb(
                     brushOpacity,
                     Color.red(color),
@@ -2407,6 +2498,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 current = null
+                invalidateFrameCache()
                 invalidate()
                 onChanged?.invoke()
                 return true
@@ -2459,6 +2551,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun loadJson(root: JSONObject) {
+        invalidateAllFrameCaches()
         frames.clear()
         redoFrames.clear()
         notes.clear()
