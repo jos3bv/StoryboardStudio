@@ -262,7 +262,7 @@ class MainActivity : Activity() {
             })
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(42)))
         refreshRecentColorSwatches()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(6), dp(5), dp(6), dp(5))
+                setMargins(dp(6), dp(5), dp(1), dp(1))
             })
         }
 
@@ -333,14 +333,14 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { confirmClear() })
 
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(56)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(56)))
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
-            setMargins(0, dp(8), 0, dp(4))
+            setMargins(0, dp(2), 0, dp(2))
         })
 
         val exportSpacer = View(this)
-        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.85f))
+        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.65f))
         val exportLabel = TextView(this).apply {
             text = "Exportar"
             setTextColor(Color.LTGRAY)
@@ -372,7 +372,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(6), dp(2), dp(6), dp(2))
+                setMargins(dp(6), dp(2), dp(1), dp(1))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -395,7 +395,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
-        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.17f))
+        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
@@ -750,7 +750,7 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
-                setMargins(dp(1), 0, dp(1), 0)
+                setMargins(dp(1), 1, dp(1), 1)
             })
         }
     }
