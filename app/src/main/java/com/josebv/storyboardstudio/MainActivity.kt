@@ -570,6 +570,16 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
+        // Shift toolbar button content slightly downward to align icon centers with the zoom track.
+        listOf(shotGroup, playback, zoomGroup).forEach { group ->
+            for (i in 0 until group.childCount) {
+                val child = group.getChildAt(i)
+                if (child is Button) {
+                    child.setPadding(child.paddingLeft, dp(8), child.paddingRight, 0)
+                    child.gravity = Gravity.CENTER
+                }
+            }
+        }
         timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
@@ -638,8 +648,15 @@ class MainActivity : Activity() {
             setOnClickListener { chooseAudio() }
         }
         audioActionButton = replaceAudioButton
-        setButtonIcon(replaceAudioButton, "ic_replace_audio", 32, transparent = true)
-        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(40), dp(40),
+        val replaceAudioId = resources.getIdentifier("ic_replace_audio", "drawable", packageName)
+        if (replaceAudioId != 0) {
+            val replaceAudioBitmap = BitmapFactory.decodeResource(resources, replaceAudioId)
+            val replaceAudioDrawable = android.graphics.drawable.BitmapDrawable(resources, replaceAudioBitmap)
+            replaceAudioDrawable.setBounds(0, 0, dp(104), dp(14))
+            replaceAudioButton.setCompoundDrawables(null, replaceAudioDrawable, null, null)
+            replaceAudioButton.gravity = Gravity.CENTER
+        }
+        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(112), dp(42),
             Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(4)
             bottomMargin = dp(3)
