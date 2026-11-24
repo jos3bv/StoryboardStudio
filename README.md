@@ -1,4 +1,4 @@
-# Storyboard Studio 0.9.3
+# Storyboard Studio 0.9.4
 
 Rediseño de interfaz basado en las referencias visuales de BV’StoryboardStudio.
 
@@ -20,7 +20,7 @@ Se conserva el motor de dibujo, el uso del S Pen, importación de imágenes, ses
 ## Compilación
 El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.
 
-Versión: 0.9.3 (versionCode 11).
+Versión: 0.9.4 (versionCode 11).
 
 
 ## Iconos SVG

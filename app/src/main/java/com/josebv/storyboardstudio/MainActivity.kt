@@ -508,8 +508,8 @@ class MainActivity : Activity() {
         parent: LinearLayout,
         drawableName: String,
         description: String,
-        action: () -> Unit,
-        sizeDp: Int = 28
+        sizeDp: Int = 28,
+        action: () -> Unit
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp)
@@ -1090,7 +1090,7 @@ class MainActivity : Activity() {
             setText(projectName)
             hint = "Nombre del proyecto"
             selectAll()
-            singleLine = true
+            setSingleLine(true)
         }
         AlertDialog.Builder(this)
             .setTitle("Nombre de la sesión")
@@ -1951,7 +1951,6 @@ private data class Stroke(
 class DrawingView(context: android.content.Context) : View(context) {
     init {
         setBackgroundColor(Color.WHITE)
-        isOpaque = true
     }
 
     var onChanged: (() -> Unit)? = null
