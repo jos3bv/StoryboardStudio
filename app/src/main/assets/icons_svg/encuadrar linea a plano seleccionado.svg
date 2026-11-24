@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 45 45">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+      }
+
+      .cls-2 {
+        fill: #0af;
+      }
+    </style>
+  </defs>
+  <g id="BV_StoryboardStudio" data-name="BV&amp;apos;StoryboardStudio">
+    <g>
+      <path class="cls-2" d="M38.13,32.68H6.87V12.32h31.27v20.37ZM8.87,30.68h27.27V14.32H8.87v16.37Z"/>
+      <rect class="cls-1" width="45" height="45"/>
+    </g>
+  </g>
+</svg>

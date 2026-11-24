@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 45 45">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+      }
+
+      .cls-2 {
+        fill: #b4b4b4;
+      }
+    </style>
+  </defs>
+  <g id="BV_StoryboardStudio" data-name="BV&amp;apos;StoryboardStudio">
+    <g>
+      <g>
+        <polygon class="cls-2" points="24.8 17.53 24.8 10.34 6.85 23.22 24.8 34.72 24.8 28.38 16.81 23.26 24.8 17.53"/>
+        <polygon class="cls-2" points="26.8 18.05 26.3 18.4 25.8 18.76 19.59 23.22 25.8 27.2 26.3 27.52 26.8 27.84 37.54 34.72 37.54 10.34 26.8 18.05"/>
+      </g>
+      <rect class="cls-1" width="45" height="45"/>
+    </g>
+  </g>
+</svg>
