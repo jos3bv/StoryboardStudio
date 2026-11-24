@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
     private var audioActionButton: Button? = null
+    private var cutModeButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -231,7 +232,7 @@ class MainActivity : Activity() {
         }
         inlineColorPicker = picker
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.05f).apply {
-            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
+            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(10))
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -264,7 +265,9 @@ class MainActivity : Activity() {
             })
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)).apply {
+            setMargins(0, 0, 0, dp(8))
+        })
         refreshRecentColorSwatches()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
@@ -308,9 +311,8 @@ class MainActivity : Activity() {
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
-            // The first button has no leading margin; each following button adds
-            // exactly one gap, avoiding the sum of the previous right + next left margins.
-            val leadingGap = if (row.childCount == 0) 0 else dp(0.1f)
+            // Buttons touch directly: no individual margins or added gaps.
+            val leadingGap = 0
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
                 setMargins(leadingGap, 0, 0, 0)
             })
@@ -375,13 +377,11 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
-            })
+            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)))
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
-        importButton("ic_export_pdf", "Importar archivo SRT") { chooseSrt() }
+        importButton("ic_import_srt", "Importar archivo SRT") { chooseSrt() }
         sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(62)))
 
         val exportSpacer = View(this)
@@ -416,9 +416,7 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
-            })
+            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)))
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
@@ -511,6 +509,12 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
+        cutModeButton = addIconCompactButton(shotGroup, "ic_cut_frame", "Cortar plano") {
+            timelineView.splitMode = !timelineView.splitMode
+            cutModeButton?.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (timelineView.splitMode) Color.rgb(20, 137, 195) else Color.rgb(78, 78, 78)
+            )
+        }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
         shotLabel = TextView(this).apply {
@@ -605,6 +609,7 @@ class MainActivity : Activity() {
                 timelineView.setPlayhead(position)
             }
             onMoveFrame = { from, to -> moveFrame(from, to) }
+            onSplitFrame = { index, firstDuration -> splitFrame(index, firstDuration) }
             onRequestAudio = { chooseAudio() }
             projectLabel = projectName
         }
@@ -942,6 +947,22 @@ class MainActivity : Activity() {
         val target = currentFrame + 1
         drawing.duplicateFrame(currentFrame, target)
         frameDurations.add(target, frameDurations[currentFrame])
+        currentFrame = target
+        drawing.setFrame(currentFrame)
+        updateFrameStatus()
+        updateTimeline()
+        scheduleAutosave()
+    }
+
+    private fun splitFrame(index: Int, firstDuration: Int) {
+        if (index !in frameDurations.indices) return
+        val originalDuration = frameDurations[index]
+        val first = firstDuration.coerceIn(100, originalDuration - 100)
+        val second = originalDuration - first
+        val target = index + 1
+        drawing.duplicateFrame(index, target)
+        frameDurations[index] = first
+        frameDurations.add(target, second)
         currentFrame = target
         drawing.setFrame(currentFrame)
         updateFrameStatus()
@@ -1829,6 +1850,8 @@ class TimelineView(context: android.content.Context) : View(context) {
     var onBoundaryChanged: ((Int, Int, Int) -> Unit)? = null
     var onSeek: ((Int) -> Unit)? = null
     var onMoveFrame: ((Int, Int) -> Unit)? = null
+    var onSplitFrame: ((Int, Int) -> Unit)? = null
+    var splitMode: Boolean = false
     var onRequestAudio: (() -> Unit)? = null
     var projectLabel: String = "Mi storyboard"
 
@@ -2034,59 +2057,81 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     private fun drawWaveform(canvas: Canvas) {
-        val lane = RectF(leftMargin, audioTop, max(width - leftMargin, leftMargin + audioDurationMs / 1000f * pixelsPerSecond), audioTop + audioHeight)
+        val lane = RectF(leftMargin, audioTop,
+            max(width - leftMargin, leftMargin + audioDurationMs / 1000f * pixelsPerSecond),
+            audioTop + audioHeight)
         paint.color = Color.rgb(43, 83, 47)
         canvas.drawRect(lane, paint)
-        paint.color = Color.rgb(139, 185, 151)
+
+        // Waveform data scrolls with time; track labels and status graphics stay in the viewport.
+        val scroll = parent as? HorizontalScrollView
+        val viewportLeft = (scroll?.scrollX ?: 0).toFloat()
+        val viewportWidth = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
+        val viewportCenter = viewportLeft + viewportWidth / 2f
+        val viewportRight = viewportLeft + viewportWidth
+
         if (waveform.isNotEmpty() && audioDurationMs > 0) {
+            paint.color = Color.rgb(139, 185, 151)
             val center = audioTop + audioHeight / 2f
             val step = lane.width() / waveform.size
             waveform.forEachIndexed { index, peak ->
                 val barHeight = max(1f * density, peak * (audioHeight - 5f * density))
                 val x = leftMargin + index * step
-                canvas.drawRect(x, center - barHeight / 2f, x + max(1f, step * 0.68f), center + barHeight / 2f, paint)
+                canvas.drawRect(x, center - barHeight / 2f,
+                    x + max(1f, step * 0.68f), center + barHeight / 2f, paint)
             }
-        } else {
+        }
+
+        // Fixed track label remains visible at the left edge while the timeline scrolls.
+        val tagRect = RectF(viewportLeft + 6f * density, audioTop + 5f * density,
+            viewportLeft + 49f * density, audioTop + 21f * density)
+        paint.color = Color.argb(220, 25, 34, 29)
+        canvas.drawRoundRect(tagRect, 3f * density, 3f * density, paint)
+        paint.color = Color.rgb(220, 235, 222)
+        paint.textSize = 9f * density
+        paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        canvas.drawText("AUDIO", tagRect.centerX(), tagRect.centerY() + 3f * density, paint)
+        paint.typeface = Typeface.DEFAULT
+        paint.textAlign = Paint.Align.LEFT
+
+        if (audioLoading) {
             paint.textSize = 11f * density
             paint.color = Color.rgb(180, 193, 183)
-            if (audioLoading) {
-                paint.textAlign = Paint.Align.CENTER
-                canvas.drawText("Cargando audio y analizando forma de onda…", width / 2f,
-                    audioTop + audioHeight / 2f - 5f * density, paint)
-                // Keep the loading indicator anchored to the visible viewport while the timeline scrolls.
-                val scroll = parent as? HorizontalScrollView
-                val viewportWidth = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
-                val viewportLeft = (scroll?.scrollX ?: 0).toFloat()
-                val barLeft = viewportLeft + viewportWidth * 0.15f
-                val barRight = viewportLeft + viewportWidth * 0.85f
-                paint.color = Color.rgb(115, 135, 150)
-                canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
-                    barRight, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
-                paint.color = Color.rgb(40, 170, 210)
-                val progressWidth = ((SystemClock.uptimeMillis() / 8L) % 100L) / 100f * (barRight - barLeft)
-                canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
-                    barLeft + progressWidth, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
-                paint.textAlign = Paint.Align.LEFT
-                postInvalidateDelayed(80)
-            } else if (audioDurationMs > 0) {
-                paint.textAlign = Paint.Align.CENTER
-                canvas.drawText("Generando forma de onda…", width / 2f,
-                    audioTop + audioHeight / 2f + 4f * density, paint)
-                paint.textAlign = Paint.Align.LEFT
-            } else {
-                val audioId = resources.getIdentifier("ic_load_audio", "drawable", context.packageName)
-                if (audioId != 0) {
-                    val bitmap = BitmapFactory.decodeResource(resources, audioId)
-                    if (bitmap != null) {
-                        val targetW = 104f * density
-                        val targetH = targetW * bitmap.height / bitmap.width
-                        val dst = RectF(width / 2f - targetW / 2f,
-                            audioTop + audioHeight / 2f - targetH / 2f,
-                            width / 2f + targetW / 2f,
-                            audioTop + audioHeight / 2f + targetH / 2f)
-                        canvas.drawBitmap(bitmap, null, dst, paint)
-                        bitmap.recycle()
-                    }
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText("Cargando audio y analizando forma de onda…", viewportCenter,
+                audioTop + audioHeight / 2f - 5f * density, paint)
+            val barLeft = viewportLeft + viewportWidth * 0.15f
+            val barRight = min(viewportRight - 8f * density, viewportLeft + viewportWidth * 0.85f)
+            paint.color = Color.rgb(115, 135, 150)
+            canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
+                barRight, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+            paint.color = Color.rgb(40, 170, 210)
+            val progressWidth = ((SystemClock.uptimeMillis() / 8L) % 100L) / 100f * (barRight - barLeft)
+            canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
+                barLeft + progressWidth, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+            paint.textAlign = Paint.Align.LEFT
+            postInvalidateDelayed(80)
+        } else if (audioDurationMs > 0 && waveform.isEmpty()) {
+            paint.textSize = 11f * density
+            paint.color = Color.rgb(180, 193, 183)
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText("Generando forma de onda…", viewportCenter,
+                audioTop + audioHeight / 2f + 4f * density, paint)
+            paint.textAlign = Paint.Align.LEFT
+        } else if (audioDurationMs <= 0) {
+            val audioId = resources.getIdentifier("ic_load_audio", "drawable", context.packageName)
+            if (audioId != 0) {
+                val bitmap = BitmapFactory.decodeResource(resources, audioId)
+                if (bitmap != null) {
+                    val targetW = 104f * density
+                    val targetH = targetW * bitmap.height / bitmap.width
+                    val dst = RectF(viewportCenter - targetW / 2f,
+                        audioTop + audioHeight / 2f - targetH / 2f,
+                        viewportCenter + targetW / 2f,
+                        audioTop + audioHeight / 2f + targetH / 2f)
+                    canvas.drawBitmap(bitmap, null, dst, paint)
+                    bitmap.recycle()
                 }
             }
         }
@@ -2119,6 +2164,19 @@ class TimelineView(context: android.content.Context) : View(context) {
                 downX = event.x
                 downY = event.y
                 activeIndex = hitFrame(event.x, event.y)
+                if (splitMode && activeIndex >= 0) {
+                    val rect = frameRect(activeIndex)
+                    val offsetMs = ((event.x - rect.left) / pixelsPerSecond * 1000f).toInt()
+                    val duration = durations[activeIndex]
+                    if (offsetMs >= 100 && offsetMs <= duration - 100) {
+                        onSplitFrame?.invoke(activeIndex, offsetMs)
+                    } else {
+                        Toast.makeText(context, "El corte debe dejar al menos 0,1 segundos en cada parte", Toast.LENGTH_SHORT).show()
+                    }
+                    gestureMode = GestureMode.NONE
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 val playheadX = leftMargin + playheadMs / 1000f * pixelsPerSecond
                 val nearPlayhead = kotlin.math.abs(event.x - playheadX) <= 18f * density
 
