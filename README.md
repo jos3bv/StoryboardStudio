@@ -91,3 +91,10 @@ El cabezal de reproducción se puede arrastrar por toda la duración del audio, 
 - Eliminada la rueda cromática circular.
 - Panel izquierdo reorganizado según la referencia: muestras de color y grises en dos filas, herramientas en una cuadrícula de botones cuadrados delineados y exportaciones con el mismo lenguaje visual.
 - Ajustados tamaños, márgenes y separaciones para recuperar la composición compacta y alineada de la referencia.
+
+
+## Versión 0.9.15
+- Reparada la composición HSV: el selector vuelve a mostrar correctamente el degradado de blanco a color y de color a negro; se eliminó el relleno negro accidental que ocultaba el degradado.
+- Ajustada la anchura útil del selector para dejar márgenes laterales como en la referencia.
+- Herramientas y exportaciones reorganizadas con botones cuadrados de tamaño fijo y separaciones uniformes más compactas; se elimina la distribución ponderada que separaba excesivamente las columnas.
+- Restaurado el acceso visible para agregar audio ( + ) y cambiarlo ( ↻ ); el botón actualiza su estado al cargar un archivo.

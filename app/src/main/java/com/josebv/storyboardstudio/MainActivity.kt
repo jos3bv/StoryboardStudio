@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     private var restoringSession = false
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
+    private var audioActionButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -305,8 +306,8 @@ class MainActivity : Activity() {
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
-            row.addView(button, LinearLayout.LayoutParams(0, dp(56), 1f).apply {
-                setMargins(dp(5), dp(5), dp(5), dp(5))
+            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(dp(6), dp(5), dp(6), dp(5))
             })
         }
 
@@ -332,10 +333,10 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { confirmClear() })
 
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(66)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(66)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(132)).apply {
-            setMargins(0, dp(12), 0, dp(4))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
+            setMargins(0, dp(8), 0, dp(4))
         })
 
         val exportSpacer = View(this)
@@ -370,8 +371,8 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            exports.addView(b, LinearLayout.LayoutParams(0, dp(56), 1f).apply {
-                setMargins(dp(5), dp(2), dp(5), dp(2))
+            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(dp(6), dp(2), dp(6), dp(2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -568,8 +569,8 @@ class MainActivity : Activity() {
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
         val replaceAudioButton = Button(this).apply {
-            text = "↻"
-            contentDescription = "Reemplazar audio"
+            text = if (audioUri == null) "+" else "↻"
+            contentDescription = if (audioUri == null) "Agregar audio" else "Reemplazar audio"
             textSize = 16f
             setTextColor(Color.WHITE)
             isAllCaps = false
@@ -583,6 +584,7 @@ class MainActivity : Activity() {
             stateListAnimator = null
             setOnClickListener { chooseAudio() }
         }
+        audioActionButton = replaceAudioButton
         timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(28), dp(26),
             Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(4)
@@ -1191,6 +1193,10 @@ class MainActivity : Activity() {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             audioUri = uri
+            audioActionButton?.apply {
+                text = "↻"
+                contentDescription = "Reemplazar audio"
+            }
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(this@MainActivity, uri)
@@ -2124,7 +2130,7 @@ private class HueSatValPickerView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val inset = 2f * density
+        val inset = 12f * density
         val barHeight = 24f * density
         hueBar = RectF(inset, inset, width - inset, inset + barHeight)
         paint.style = Paint.Style.FILL
@@ -2147,7 +2153,7 @@ private class HueSatValPickerView(
 
         val availableTop = hueBar.bottom + 12f * density
         val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
-        val squareWidth = (width - 4f * density).coerceAtLeast(1f)
+        val squareWidth = (width - 36f * density).coerceAtLeast(1f)
         val squareHeight = min(squareWidth * 0.74f, availableHeight).coerceAtLeast(1f)
         val left = (width - squareWidth) / 2f
         square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
@@ -2168,10 +2174,11 @@ private class HueSatValPickerView(
         paint.strokeWidth = 2f * density
         paint.color = Color.WHITE
         canvas.drawCircle(sx, sy, 7f * density, paint)
-        paint.style = Paint.Style.FILL
-        paint.color = Color.BLACK
+        paint.style = Paint.Style.STROKE
+        paint.color = Color.rgb(115, 115, 115)
         paint.strokeWidth = 1f * density
         canvas.drawRect(square, paint)
+        paint.style = Paint.Style.FILL
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
