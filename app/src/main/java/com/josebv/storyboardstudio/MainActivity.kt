@@ -230,7 +230,7 @@ class MainActivity : Activity() {
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(dp(2), dp(2), dp(2), dp(2))
+            setPadding(0, dp(2), 0, dp(2))
         }
 
         val picker = HueSatValPickerView(
@@ -284,6 +284,9 @@ class MainActivity : Activity() {
         val toolsGrid = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
 
         fun tool(iconName: String, description: String, action: () -> Unit): Button {
@@ -306,22 +309,30 @@ class MainActivity : Activity() {
                 minimumHeight = 0
                 stateListAnimator = null
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 34)
+                setButtonIcon(this, iconName, 56)
             }
         }
 
         val toolRow1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
         val toolRow2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
-            // Buttons touch directly: no margins or added gaps.
-            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
+            // Exact zero margins: adjacent button bounds share an edge.
+            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(0, 0, 0, 0)
+            })
         }
 
         addToolCell(toolRow1, tool("ic_pencil", "Lápiz") {
@@ -360,6 +371,9 @@ class MainActivity : Activity() {
         val imports = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
         fun importButton(iconName: String, description: String, action: () -> Unit) {
             val b = Button(this).apply {
@@ -380,9 +394,11 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 34)
+                setButtonIcon(this, iconName, 56)
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
+            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(0, 0, 0, 0)
+            })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
@@ -401,6 +417,9 @@ class MainActivity : Activity() {
         val exports = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
         fun exportButton(iconName: String, description: String, action: () -> Unit) {
             val b = Button(this).apply {
@@ -421,9 +440,11 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 34)
+                setButtonIcon(this, iconName, 56)
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(-1), dp(-1), dp(-1), dp(-1)) })
+            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(0, 0, 0, 0)
+            })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
@@ -447,7 +468,11 @@ class MainActivity : Activity() {
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
         work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
-        val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
+        val canvasArea = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(48, 48, 48))
+            clipChildren = false
+            clipToPadding = false
+        }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
 
         val canvasButtons = LinearLayout(this).apply {
@@ -473,10 +498,7 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT or Gravity.TOP).apply {
-                leftMargin = 0
-                rightMargin = 0
-                topMargin = dp(2)
-                bottomMargin = dp(2)
+                setMargins(0, 0, 0, 0)
             }
         )
         val centerButton = Button(this).apply {
@@ -575,13 +597,15 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        // Apply a smaller, uniform top inset so every toolbar icon aligns with the zoom track.
+        // All toolbar groups and controls share the same 40 dp row and true center alignment.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
+            group.gravity = Gravity.CENTER
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(child.paddingLeft, dp(5), child.paddingRight, 0)
+                    child.setPadding(0, 0, 0, 0)
                     child.gravity = Gravity.CENTER
+                    child.translationY = 0f
                 }
             }
         }
@@ -2133,8 +2157,6 @@ class TimelineView(context: android.content.Context) : View(context) {
             paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             val label = "${projectLabel}_${index + 1}"
             canvas.drawText(label, x + 7f * density, cardsTop + 17f * density, paint)
-            paint.textSize = 10f * density
-            canvas.drawText("PLANO ${index + 1}", x + 7f * density, cardsTop + 31f * density, paint)
             paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             val durationText = String.format(java.util.Locale.US, "%.2fs", duration / 1000f)
             val tw = paint.measureText(durationText)
@@ -2173,19 +2195,6 @@ class TimelineView(context: android.content.Context) : View(context) {
                     x + max(1f, step * 0.68f), center + barHeight / 2f, paint)
             }
         }
-
-        // Fixed track label remains visible at the left edge while the timeline scrolls.
-        val tagRect = RectF(viewportLeft + 6f * density, audioTop + 5f * density,
-            viewportLeft + 49f * density, audioTop + 21f * density)
-        paint.color = Color.argb(220, 25, 34, 29)
-        canvas.drawRoundRect(tagRect, 3f * density, 3f * density, paint)
-        paint.color = Color.rgb(220, 235, 222)
-        paint.textSize = 9f * density
-        paint.textAlign = Paint.Align.CENTER
-        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-        canvas.drawText("AUDIO", tagRect.centerX(), tagRect.centerY() + 3f * density, paint)
-        paint.typeface = Typeface.DEFAULT
-        paint.textAlign = Paint.Align.LEFT
 
         if (audioLoading) {
             paint.textSize = 11f * density
