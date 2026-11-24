@@ -141,6 +141,10 @@ class MainActivity : Activity() {
         }
         val archivoButton = addHeaderButton(top, "Archivo", dp(120)) { }
         archivoButton.setOnClickListener { showArchivoPopup(archivoButton) }
+        val menuDivider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
+        top.addView(menuDivider, LinearLayout.LayoutParams(dp(1), dp(34)).apply {
+            setMargins(dp(2), 0, dp(2), 0)
+        })
         addHeaderButton(top, "Guardar", dp(98)) { saveProject() }
         projectTitleLabel = TextView(this).apply {
             text = projectName
@@ -153,23 +157,25 @@ class MainActivity : Activity() {
             setOnClickListener { editProjectName() }
             contentDescription = "Nombre de la sesión. Toca para cambiarlo."
         }
-        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, -1, 1.25f))
-        val headerHistory = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        top.addView(projectTitleLabel, LinearLayout.LayoutParams(0, -1, 1.0f))
+        status = TextView(this).apply {
+            setTextColor(Color.rgb(195, 205, 215))
+            textSize = 10f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(8), 0)
         }
-        addCanvasIconButton(headerHistory, "ic_undo", "Deshacer") { drawing.undo() }
-        addCanvasIconButton(headerHistory, "ic_redo", "Rehacer") { drawing.redo() }
-        top.addView(headerHistory, LinearLayout.LayoutParams(-2, -1))
+        top.addView(status, LinearLayout.LayoutParams(0, -1, 1.05f))
         val brand = TextView(this).apply {
             text = "BV’StoryboardStudio"
             setTextColor(Color.WHITE)
             textSize = 16f
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
-            setPadding(0, 0, dp(4), 0)
+            setPadding(0, 0, dp(14), 0)
         }
-        top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.8f))
+        top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.72f))
         root.addView(top, LinearLayout.LayoutParams(-1, dp(50)))
 
         // Work area: left tool panel and a large central canvas.
@@ -208,7 +214,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(18)))
+        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(22)))
         val grayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -224,12 +230,12 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(18), 1f).apply {
+            grayRow.addView(chip, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
                 setMargins(dp(1), 0, dp(1), 0)
             })
         }
-        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(18)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(42)))
+        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(22)))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(48)))
         refreshRecentColorSwatches()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
@@ -361,6 +367,23 @@ class MainActivity : Activity() {
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
 
+        val canvasButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") {
+            drawing.undo()
+            scheduleAutosave()
+        }
+        addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") {
+            drawing.redo()
+            scheduleAutosave()
+        }
+        canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(32)
+            topMargin = dp(18)
+        })
+
         val sliderRail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -403,24 +426,12 @@ class MainActivity : Activity() {
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(10), 0)
         }
-        val shotGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val shotGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
-        val shotInfo = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        status = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 11f; maxLines = 1
-            text = projectName
-        }
-        durationLabel = TextView(this).apply {
-            setTextColor(Color.LTGRAY); textSize = 11f; maxLines = 1
-        }
-        shotInfo.addView(status)
-        shotInfo.addView(durationLabel)
-        shotGroup.addView(shotInfo, LinearLayout.LayoutParams(dp(112), -1).apply {
-            setMargins(dp(5), 0, dp(2), 0)
-        })
         addIconCompactButton(shotGroup, "ic_duration_down", "Reducir duración") { changeDuration(-500) }
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
@@ -439,7 +450,7 @@ class MainActivity : Activity() {
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
         toolbar.addView(playback, LinearLayout.LayoutParams(0, -1, 2.7f))
 
-        val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
         addIconCompactButton(zoomGroup, "ic_zoom_out", "Alejar timeline") { timelineView.changeZoom(0.8f) }
         val zoomSeek = SeekBar(this).apply {
@@ -450,7 +461,10 @@ class MainActivity : Activity() {
                 timelineView.setZoomLevel(factor)
             })
         }
-        zoomGroup.addView(zoomSeek, LinearLayout.LayoutParams(0, dp(34), 1f))
+        zoomGroup.addView(zoomSeek, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setMargins(dp(4), 0, dp(4), 0)
+        })
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") { timelineView.changeZoom(1.25f) }
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(0, -1, 2.5f))
         timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(44)))
@@ -523,6 +537,16 @@ class MainActivity : Activity() {
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp, transparent = true)
+        val feedback = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed),
+                android.graphics.drawable.ColorDrawable(Color.argb(72, 255, 255, 255)))
+            addState(intArrayOf(android.R.attr.state_hovered),
+                android.graphics.drawable.ColorDrawable(Color.argb(38, 255, 255, 255)))
+            addState(intArrayOf(),
+                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        }
+        button.foreground = feedback
+        button.isClickable = true
         return button
     }
 
@@ -575,12 +599,14 @@ class MainActivity : Activity() {
             textSize = if (label.length > 3) 9f else 16f
             isAllCaps = false; minWidth = dp(30); minimumWidth = dp(30)
             setPadding(dp(2), 0, dp(2), 0)
+            gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(78, 78, 78)))
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, dp(38)).apply {
-            setMargins(dp(1), 0, dp(1), 0)
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(40)).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setMargins(dp(3), 0, dp(3), 0)
         })
         return button
     }
@@ -605,7 +631,7 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            row.addView(chip, LinearLayout.LayoutParams(0, dp(18), 1f).apply {
+            row.addView(chip, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
                 setMargins(dp(1), 0, dp(1), 0)
             })
         }
@@ -683,7 +709,8 @@ class MainActivity : Activity() {
     }
 
     private fun setStatus(message: String) {
-        status.text = message
+        headerStatusMessage = message
+        if (::status.isInitialized) updateFrameStatus()
     }
 
     private fun totalDuration(): Int = frameDurations.sum()
@@ -717,10 +744,13 @@ class MainActivity : Activity() {
     private fun updateFrameStatus() {
         if (!::status.isInitialized) return
         val duration = frameDurations.getOrElse(currentFrame) { 3000 }
-        status.text = "${projectName}_${currentFrame + 1}"
         if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
         if (::timelineView.isInitialized) timelineView.projectLabel = projectName
-        durationLabel.text = "Duración: ${formatTime(duration)}"
+        if (::status.isInitialized) {
+            val selectedTake = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
+            status.text = if (headerStatusMessage.isBlank()) selectedTake else "$selectedTake · $headerStatusMessage"
+        }
+        if (::durationLabel.isInitialized) durationLabel.text = formatTime(duration)
     }
 
     private fun updateTimeline() {
@@ -1893,7 +1923,7 @@ private class HueSatValPickerView(
         cx = width / 2f; cy = height / 2f
         radius = min(width, height) * 0.46f
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 27f * density
-        paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN, Color.GREEN, Color.YELLOW, Color.RED), null)
+        paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED), null)
         canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
         paint.shader = null
         val half = radius * 0.40f
