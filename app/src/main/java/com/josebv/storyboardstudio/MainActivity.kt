@@ -65,7 +65,7 @@ class MainActivity : Activity() {
     private var restoringSession = false
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
-    private var audioActionButton: Button? = null
+    private var audioActionButton: View? = null
     private var cutModeButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
@@ -570,12 +570,12 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        // Shift toolbar button content slightly downward to align icon centers with the zoom track.
+        // Apply a smaller, uniform top inset so every toolbar icon aligns with the zoom track.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(child.paddingLeft, dp(8), child.paddingRight, 0)
+                    child.setPadding(child.paddingLeft, dp(5), child.paddingRight, 0)
                     child.gravity = Gravity.CENTER
                 }
             }
@@ -631,32 +631,20 @@ class MainActivity : Activity() {
         ))
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
-        val replaceAudioButton = Button(this).apply {
-            text = ""
+        // Reemplazar audio: mismo tamaño y presentación que el gráfico "Cargar audio",
+        // cambiando únicamente el recurso gráfico. Sin fondo ni drawable comprimido.
+        val replaceAudioButton = ImageView(this).apply {
             contentDescription = if (audioUri == null) "Agregar audio" else "Reemplazar audio"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
-            minHeight = 0
-            minimumHeight = 0
+            setImageResource(R.drawable.ic_replace_audio)
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
             setPadding(0, 0, 0, 0)
-            background = android.graphics.drawable.ColorDrawable(Color.argb(185, 42, 48, 54))
-            elevation = 0f
-            stateListAnimator = null
+            background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            isClickable = true
+            isFocusable = true
             setOnClickListener { chooseAudio() }
         }
         audioActionButton = replaceAudioButton
-        val replaceAudioId = resources.getIdentifier("ic_replace_audio", "drawable", packageName)
-        if (replaceAudioId != 0) {
-            val replaceAudioBitmap = BitmapFactory.decodeResource(resources, replaceAudioId)
-            val replaceAudioDrawable = android.graphics.drawable.BitmapDrawable(resources, replaceAudioBitmap)
-            replaceAudioDrawable.setBounds(0, 0, dp(104), dp(14))
-            replaceAudioButton.setCompoundDrawables(null, replaceAudioDrawable, null, null)
-            replaceAudioButton.gravity = Gravity.CENTER
-        }
-        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(112), dp(42),
+        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(104), dp(38),
             Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(4)
             bottomMargin = dp(3)
