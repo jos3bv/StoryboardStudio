@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var durationLabel: TextView
     private lateinit var playPauseButton: Button
+    private lateinit var shotLabel: TextView
     private var headerStatusMessage: String = ""
     private var paletteDialog: AlertDialog? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -113,6 +114,8 @@ class MainActivity : Activity() {
         prepareStorageFolders()
         migratePreviousStorage()
         loadSession()
+        handler.removeCallbacks(autosaveRunnable)
+        handler.postDelayed(autosaveRunnable, 15_000)
     }
 
     private fun buildInterface() {
@@ -231,8 +234,8 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
-                setMargins(dp(1), 0, dp(1), 0)
+            grayRow.addView(chip, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
             })
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(22)))
@@ -278,7 +281,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(dp(3), dp(3), dp(3), dp(3))
+                setMargins(dp(1), dp(2), dp(1), dp(2))
             })
         }
 
@@ -350,13 +353,13 @@ class MainActivity : Activity() {
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
         // Sliders are positioned beside the canvas, matching the annotated layout.
-        val sizeSlider = VerticalSliderView(this, "T", 1, 200,
+        val sizeSlider = VerticalSliderView(this, "", 1, 200,
             drawing.activeBrushSize().toInt()) { value ->
             drawing.setActiveBrushSize(value.toFloat())
             scheduleAutosave()
         }
         brushSizeSlider = sizeSlider
-        val opacitySlider = VerticalSliderView(this, "O", 0, 100,
+        val opacitySlider = VerticalSliderView(this, "", 0, 100,
             drawing.brushOpacity()) { value ->
             drawing.configureBrush(drawing.activeBrushSize(), value * 255 / 100, drawing.pressureEnabled())
             scheduleAutosave()
@@ -437,6 +440,16 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
         addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
+        shotLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 10f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(5), 0, dp(3), 0)
+            contentDescription = "Plano seleccionado y duración"
+        }
+        shotGroup.addView(shotLabel, LinearLayout.LayoutParams(dp(118), -1))
         toolbar.addView(shotGroup, LinearLayout.LayoutParams(0, -1, 4.7f))
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
@@ -453,7 +466,7 @@ class MainActivity : Activity() {
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
-        addIconCompactButton(zoomGroup, "ic_zoom_out", "Alejar timeline") { timelineView.changeZoom(0.8f) }
+        addIconCompactButton(zoomGroup, "ic_zoom_out", "Ajustar timeline completo") { timelineView.zoomToFitAll() }
         val zoomSeek = SeekBar(this).apply {
             max = 100
             progress = 35
@@ -518,6 +531,14 @@ class MainActivity : Activity() {
         drawable.setBounds(0, 0, size, size)
         button.text = ""
         button.setCompoundDrawables(null, drawable, null, null)
+        button.setOnTouchListener { view, event ->
+            val icon = (view as? Button)?.compoundDrawables?.get(1)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_HOVER_ENTER -> icon?.alpha = 145
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_HOVER_EXIT -> icon?.alpha = 255
+            }
+            false
+        }
         button.compoundDrawablePadding = 0
         button.gravity = Gravity.CENTER
         button.setPadding(0, 0, 0, 0)
@@ -538,15 +559,6 @@ class MainActivity : Activity() {
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp, transparent = true)
-        val feedback = android.graphics.drawable.StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed),
-                android.graphics.drawable.ColorDrawable(Color.argb(72, 255, 255, 255)))
-            addState(intArrayOf(android.R.attr.state_hovered),
-                android.graphics.drawable.ColorDrawable(Color.argb(38, 255, 255, 255)))
-            addState(intArrayOf(),
-                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-        }
-        button.foreground = feedback
         button.isClickable = true
         return button
     }
@@ -632,8 +644,8 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            row.addView(chip, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
-                setMargins(dp(1), 0, dp(1), 0)
+            row.addView(chip, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
             })
         }
     }
@@ -748,10 +760,10 @@ class MainActivity : Activity() {
         if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
         if (::timelineView.isInitialized) timelineView.projectLabel = projectName
         if (::status.isInitialized) {
-            val selectedTake = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
-            status.text = if (headerStatusMessage.isBlank()) selectedTake else "$selectedTake · $headerStatusMessage"
+            status.text = headerStatusMessage
         }
         if (::durationLabel.isInitialized) durationLabel.text = formatTime(duration)
+        if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
     private fun updateTimeline() {
@@ -1139,7 +1151,14 @@ class MainActivity : Activity() {
         handler.postDelayed(autosaveRunnable, 500)
     }
 
-    private val autosaveRunnable = Runnable { saveSession(showMessage = false) }
+    private val autosaveRunnable = object : Runnable {
+        override fun run() {
+            if (!isFinishing && !isDestroyed && !restoringSession && ::drawing.isInitialized) {
+                saveSession(showMessage = false)
+            }
+            if (!isFinishing && !isDestroyed) handler.postDelayed(this, 15_000)
+        }
+    }
 
     private fun editProjectName() {
         val input = EditText(this).apply {
@@ -1656,9 +1675,19 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     fun changeZoom(factor: Float) {
-        pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(35f, 240f)
+        pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(22f, 420f)
         requestLayout()
         invalidate()
+    }
+
+    fun zoomToFitAll() {
+        val scroll = parent as? HorizontalScrollView
+        val viewport = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
+        val totalSeconds = max(durations.sum(), audioDurationMs).coerceAtLeast(1) / 1000f
+        pixelsPerSecond = (viewport / totalSeconds).coerceIn(8f, 420f)
+        requestLayout()
+        invalidate()
+        scroll?.post { scroll.scrollTo(0, 0) }
     }
 
     fun setZoomLevel(level: Float) {
@@ -1758,13 +1787,19 @@ class TimelineView(context: android.content.Context) : View(context) {
                 paint.textAlign = Paint.Align.CENTER
                 canvas.drawText("Cargando audio y analizando forma de onda…", width / 2f,
                     audioTop + audioHeight / 2f - 5f * density, paint)
+                // Keep the loading indicator anchored to the visible viewport while the timeline scrolls.
+                val scroll = parent as? HorizontalScrollView
+                val viewportWidth = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
+                val viewportLeft = (scroll?.scrollX ?: 0).toFloat()
+                val barLeft = viewportLeft + viewportWidth * 0.15f
+                val barRight = viewportLeft + viewportWidth * 0.85f
                 paint.color = Color.rgb(115, 135, 150)
-                canvas.drawRoundRect(RectF(width * 0.30f, audioTop + audioHeight / 2f + 5f * density,
-                    width * 0.70f, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+                canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
+                    barRight, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
                 paint.color = Color.rgb(40, 170, 210)
-                val progressWidth = ((SystemClock.uptimeMillis() / 8L) % 100L) / 100f * width * 0.40f
-                canvas.drawRoundRect(RectF(width * 0.30f, audioTop + audioHeight / 2f + 5f * density,
-                    width * 0.30f + progressWidth, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
+                val progressWidth = ((SystemClock.uptimeMillis() / 8L) % 100L) / 100f * (barRight - barLeft)
+                canvas.drawRoundRect(RectF(barLeft, audioTop + audioHeight / 2f + 5f * density,
+                    barLeft + progressWidth, audioTop + audioHeight / 2f + 9f * density), 2f * density, 2f * density, paint)
                 paint.textAlign = Paint.Align.LEFT
                 postInvalidateDelayed(80)
             } else if (audioDurationMs > 0) {
@@ -1922,12 +1957,12 @@ private class HueSatValPickerView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         cx = width / 2f; cy = height / 2f
-        radius = min(width, height) * 0.46f
+        radius = min(width, height) * 0.47f
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 27f * density
         paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED), null)
         canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
         paint.shader = null
-        val half = radius * 0.40f
+        val half = radius * 0.34f
         square = RectF(cx-half, cy-half, cx+half, cy+half)
         paint.style = Paint.Style.FILL
         paint.color = Color.HSVToColor(floatArrayOf(hue,1f,1f))
@@ -1952,13 +1987,21 @@ private class HueSatValPickerView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked != MotionEvent.ACTION_DOWN && event.actionMasked != MotionEvent.ACTION_MOVE) return true
         val dx = event.x-cx; val dy=event.y-cy
-        if (square.contains(event.x,event.y)) {
-            saturation=((event.x-square.left)/square.width()).coerceIn(0f,1f)
-            value=(1f-(event.y-square.top)/square.height()).coerceIn(0f,1f)
-        } else {
+        val squareHit = RectF(square).apply { inset(-10f * density, -10f * density) }
+        val ringInner = radius - 31f * density
+        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+        if (squareHit.contains(event.x, event.y)) {
+            if (square.contains(event.x, event.y)) {
+                saturation=((event.x-square.left)/square.width()).coerceIn(0f,1f)
+                value=(1f-(event.y-square.top)/square.height()).coerceIn(0f,1f)
+            }
+            // Touches in the safety gap are deliberately ignored.
+        } else if (distance >= ringInner && distance <= radius + 8f * density) {
             var degrees=Math.toDegrees(kotlin.math.atan2(dy.toDouble(),dx.toDouble())).toFloat()
             if (degrees<0f) degrees+=360f
             hue=degrees
+        } else {
+            return true
         }
         invalidate(); onColorChanged(hue,saturation,value); return true
     }
@@ -1982,8 +2025,8 @@ private class VerticalSliderView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val cx = width / 2f
-        val top = labelHeight + 8f * density
+        val cx = 2f * density
+        val top = 5f * density
         val bottom = height - 9f * density
         paint.color = Color.rgb(135, 135, 135)
         paint.strokeWidth = 3f * density
@@ -1998,7 +2041,7 @@ private class VerticalSliderView(
         paint.textAlign = Paint.Align.CENTER
         paint.textSize = 9f * density
         paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-        canvas.drawText(shortLabel, cx, 11f * density, paint)
+        if (shortLabel.isNotBlank()) canvas.drawText(shortLabel, cx, 11f * density, paint)
         paint.textSize = 8f * density
         canvas.drawText(value.toString(), cx, height - 1f * density, paint)
         paint.textAlign = Paint.Align.LEFT
@@ -2006,7 +2049,7 @@ private class VerticalSliderView(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
-            val top = labelHeight + 8f * density
+            val top = 5f * density
             val bottom = height - 9f * density
             val fraction = (1f - ((event.y - top) / (bottom - top).coerceAtLeast(1f))).coerceIn(0f, 1f)
             val next = (minimum + fraction * (maximum - minimum)).toInt().coerceIn(minimum, maximum)
@@ -2094,7 +2137,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         renderedFrameCache[frame]?.let { if (!it.isRecycled) return it }
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val cacheCanvas = Canvas(bitmap)
-        cacheCanvas.drawColor(Color.WHITE)
+        cacheCanvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         importedImages[frame]?.let { image ->
             val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f,
@@ -2282,8 +2325,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.save()
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
+        val boardBounds = RectF(0f, 0f, 1920f, 1080f)
+        val layer = canvas.saveLayer(boardBounds, null)
+        canvas.drawColor(Color.WHITE)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         current?.let { drawStroke(canvas, it) }
+        canvas.restoreToCount(layer)
         canvas.restore()
 
         val border = Paint().apply {
@@ -2358,8 +2405,9 @@ class DrawingView(context: android.content.Context) : View(context) {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
-            color = if (stroke.erase) Color.WHITE else stroke.color
+            color = stroke.color
             isDither = true
+            if (stroke.erase) xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
         }
         val fillPaint = Paint(paint).apply { style = Paint.Style.FILL }
         val baseWidth = (stroke.widths.firstOrNull() ?: 4f).coerceAtLeast(0.5f) * 2f

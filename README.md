@@ -1,4 +1,4 @@
-# Storyboard Studio 0.9.7
+# Storyboard Studio 0.9.8
 
 Rediseño de interfaz basado en las referencias visuales de BV’StoryboardStudio.
 
@@ -20,20 +20,24 @@ Se conserva el motor de dibujo, el uso del S Pen, importación de imágenes, ses
 ## Compilación
 El proyecto se compila mediante el workflow de GitHub Actions incluido en `.github/workflows/build-apk.yml`.
 
-Versión: 0.9.7 (versionCode 11).
+Versión: 0.9.8 (versionCode 11).
 
 
 ## Iconos SVG
 Los iconos entregados se conservan en `app/src/main/assets/icons_svg/` y sus versiones rasterizadas de alta resolución están en `app/src/main/res/drawable-nodpi/` para mostrarse nítidamente en Android.
 
 
-## Versión 0.9.7
+## Versión 0.9.8
 Ajustes de interfaz basados en las anotaciones: menú Archivo desplegable, panel de color ampliado, controles SVG sin fondo, deshacer/rehacer en el encabezado, timeline a ancho completo, progreso de carga de audio y caché de dibujo para mejorar la fluidez.
 
 
-## Versión 0.9.7
+## Versión 0.9.8
 Ajustes de encabezado, selector cromático HSV, muestras cuadradas, feedback visual de botones y espaciado/alineación de controles de timeline.
 
 
-## Versión 0.9.7
+## Versión 0.9.8
 Corrección de compilación: se declara el estado `headerStatusMessage` utilizado por el encabezado para mostrar el plano seleccionado y los mensajes de estado.
+
+
+## Versión 0.9.8
+Mejoras en carga de audio anclada al viewport, borrador real con borrado de píxeles, separación táctil de rueda cromática, ajuste de zoom para encajar audio y planos, controles SVG con feedback de opacidad solo en el icono y guardado automático periódico cada 15 segundos.
