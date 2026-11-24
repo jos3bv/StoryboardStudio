@@ -210,17 +210,18 @@ class MainActivity : Activity() {
         sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(42)))
         refreshRecentColorSwatches()
 
-        val toolsGrid = android.widget.GridLayout(this).apply {
-            columnCount = 3
-            rowCount = 2
-            alignmentMode = android.widget.GridLayout.ALIGN_BOUNDS
-            useDefaultMargins = false
+        // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
+        // observed on some tablet densities with zero-width weighted children.
+        val toolsGrid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
         }
-        fun tool(label: String, description: String, action: () -> Unit) {
-            val b = Button(this).apply {
+
+        fun tool(label: String, description: String, action: () -> Unit): Button {
+            return Button(this).apply {
                 text = label
                 contentDescription = description
-                textSize = 19f
+                textSize = 20f
                 isAllCaps = false
                 setTextColor(Color.LTGRAY)
                 setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
@@ -229,27 +230,51 @@ class MainActivity : Activity() {
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
+                stateListAnimator = null
                 setOnClickListener { action() }
             }
-            val lp = android.widget.GridLayout.LayoutParams().apply {
-                width = 0
-                height = dp(42)
-                columnSpec = android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f)
-                setMargins(dp(3), dp(3), dp(3), dp(3))
-            }
-            toolsGrid.addView(b, lp)
         }
-        tool("✎", "Lápiz") { drawing.setEraser(false); brushSizeSlider?.setValue(drawing.activeBrushSize().toInt()) }
-        tool("◩", "Goma") { drawing.setEraser(true); brushSizeSlider?.setValue(drawing.activeBrushSize().toInt()) }
-        tool("T", "Texto") { addTextNote() }
-        tool("▣", "Importar imagen") { chooseImage() }
-        tool("∿", "Presión del lápiz") {
-            drawing.configureBrush(drawing.activeBrushSize(), drawing.brushOpacity() * 255 / 100, !drawing.pressureEnabled())
+
+        val toolRow1 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val toolRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        fun addToolCell(row: LinearLayout, button: Button) {
+            row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+
+        addToolCell(toolRow1, tool("✎", "Lápiz") {
+            drawing.setEraser(false)
+            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+        })
+        addToolCell(toolRow1, tool("◩", "Goma") {
+            drawing.setEraser(true)
+            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+        })
+        addToolCell(toolRow1, tool("T", "Texto") { addTextNote() })
+
+        addToolCell(toolRow2, tool("▧", "Importar imagen") { chooseImage() })
+        addToolCell(toolRow2, tool("∿", "Presión del lápiz") {
+            drawing.configureBrush(
+                drawing.activeBrushSize(),
+                drawing.brushOpacity() * 255 / 100,
+                !drawing.pressureEnabled()
+            )
             setStatus(if (drawing.pressureEnabled()) "Presión activada" else "Presión desactivada")
             scheduleAutosave()
-        }
-        tool("×", "Limpiar lienzo") { confirmClear() }
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(102)).apply {
+        })
+        addToolCell(toolRow2, tool("×", "Limpiar lienzo") { confirmClear() })
+
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(48)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(48)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(96)).apply {
             setMargins(0, dp(8), 0, dp(5))
         })
 
@@ -288,32 +313,40 @@ class MainActivity : Activity() {
         sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(43)))
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
-        // Two always-visible vertical sliders, on the right edge of the tool panel.
-        val sliderRail = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(8))
-        }
+        // Sliders are positioned beside the canvas, matching the annotated layout.
         val sizeSlider = VerticalSliderView(this, "T", 1, 200,
             drawing.activeBrushSize().toInt()) { value ->
             drawing.setActiveBrushSize(value.toFloat())
             scheduleAutosave()
         }
         brushSizeSlider = sizeSlider
-        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(18), 0, 1f))
         val opacitySlider = VerticalSliderView(this, "O", 0, 100,
             drawing.brushOpacity()) { value ->
             drawing.configureBrush(drawing.activeBrushSize(), value * 255 / 100, drawing.pressureEnabled())
             scheduleAutosave()
         }
-        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(18), 0, 1f))
-        sidebar.addView(sliderRail, LinearLayout.LayoutParams(dp(20), -1))
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
-        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.098f))
+        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.122f))
 
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
+
+        val sliderRail = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(5), 0, dp(5))
+        }
+        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(22), 0, 1f))
+        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(22), 0, 1f))
+        canvasArea.addView(
+            sliderRail,
+            FrameLayout.LayoutParams(dp(22), -1, Gravity.LEFT or Gravity.TOP).apply {
+                leftMargin = dp(4)
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+        )
         val canvasButtons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(5), dp(5), dp(5), dp(5))
@@ -321,7 +354,7 @@ class MainActivity : Activity() {
         addCanvasButton(canvasButtons, "↶", "Deshacer") { drawing.undo() }
         addCanvasButton(canvasButtons, "↷", "Rehacer") { drawing.redo() }
         canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
-            leftMargin = dp(22)
+            leftMargin = dp(32)
             topMargin = dp(18)
         })
         val centerButton = Button(this).apply {
@@ -335,10 +368,10 @@ class MainActivity : Activity() {
             setOnClickListener { drawing.resetViewport() }
         }
         canvasArea.addView(centerButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
-            leftMargin = dp(22)
+            leftMargin = dp(32)
             bottomMargin = dp(12)
         })
-        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.902f))
+        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.878f))
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 2.4f))
 
         // Timeline toolbar: shot management left, playback centered, zoom/navigation right.
@@ -430,7 +463,7 @@ class MainActivity : Activity() {
             projectLabel = projectName
         }
         timelineScroll.addView(timelineView, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, dp(158)
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(178)
         ))
         timelinePanel.addView(timelineScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(timelinePanel, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1379,9 +1412,9 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val leftMargin = 18f * density
     private val rulerHeight = 22f * density
     private val cardsTop = 29f * density
-    private val cardHeight = 58f * density
-    private val audioTop = 94f * density
-    private val audioHeight = 55f * density
+    private val cardHeight = 68f * density
+    private val audioTop = 103f * density
+    private val audioHeight = 66f * density
     private val handleWidth = 13f * density
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -1477,7 +1510,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val contentWidth = leftMargin * 2 + contentDurationMs() / 1000f * pixelsPerSecond + 80f * density
         val desiredWidth = max(MeasureSpec.getSize(widthMeasureSpec).toFloat(), contentWidth).toInt()
-        val desiredHeight = (158f * density).toInt()
+        val desiredHeight = (178f * density).toInt()
         setMeasuredDimension(resolveSize(desiredWidth, widthMeasureSpec), resolveSize(desiredHeight, heightMeasureSpec))
     }
 
