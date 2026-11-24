@@ -235,7 +235,8 @@ class MainActivity : Activity() {
 
         val swatchWrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(0), 0, dp(6))
+            // Match the horizontal inset of the hue bar inside HueSatValPickerView.
+            setPadding(dp(12), dp(0), dp(12), dp(6))
         }
         recentColorContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -306,8 +307,11 @@ class MainActivity : Activity() {
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
+            // The first button has no leading margin; each following button adds
+            // exactly one gap, avoiding the sum of the previous right + next left margins.
+            val leadingGap = if (row.childCount == 0) 0 else dp(0.1f)
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(0.1f), dp(0.1f), dp(0.1f), dp(0.1f))
+                setMargins(leadingGap, 0, 0, 0)
             })
         }
 
@@ -331,7 +335,7 @@ class MainActivity : Activity() {
             setStatus(if (drawing.pressureEnabled()) "Presión activada" else "Presión desactivada")
             scheduleAutosave()
         })
-        addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { confirmClear() })
+        addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
 
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
         toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
@@ -973,13 +977,6 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }.show()
-    }
-
-    private fun confirmClear() {
-        AlertDialog.Builder(this).setTitle("Limpiar plano")
-            .setMessage("¿Borrar todos los trazos del plano actual?")
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Borrar") { _, _ -> drawing.clear(); scheduleAutosave() }.show()
     }
 
     private fun addTextNote() {
@@ -2278,6 +2275,14 @@ private data class Stroke(
 )
 
 class DrawingView(context: android.content.Context) : View(context) {
+    private data class ClearSnapshot(
+        val strokes: List<Stroke>,
+        val image: Bitmap?
+    )
+
+    private val clearUndoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
+    private val clearRedoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
+
     init {
         setBackgroundColor(Color.WHITE)
     }
@@ -2369,6 +2374,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun clearProject() {
         frames.clear()
         redoFrames.clear()
+        clearUndoSnapshots.clear()
+        clearRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
         importedImages.clear()
@@ -2412,6 +2419,19 @@ class DrawingView(context: android.content.Context) : View(context) {
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
+            return
+        }
+
+        val clearStack = clearUndoSnapshots[frame]
+        if (!clearStack.isNullOrEmpty()) {
+            val snapshot = clearStack.removeAt(clearStack.lastIndex)
+            frames[frame] = snapshot.strokes.toMutableList()
+            if (snapshot.image != null) importedImages[frame] = snapshot.image
+            else importedImages.remove(frame)
+            clearRedoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+            invalidateFrameCache()
+            invalidate()
+            onChanged?.invoke()
         }
     }
 
@@ -2422,15 +2442,34 @@ class DrawingView(context: android.content.Context) : View(context) {
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
+            return
+        }
+
+        val clearStack = clearRedoSnapshots[frame]
+        if (!clearStack.isNullOrEmpty()) {
+            val snapshot = clearStack.removeAt(clearStack.lastIndex)
+            clearUndoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+            frames.remove(frame)
+            importedImages.remove(frame)
+            invalidateFrameCache()
+            invalidate()
+            onChanged?.invoke()
         }
     }
 
     fun clear() {
-        strokes().clear()
+        val existingStrokes = frames[frame].orEmpty()
+        val existingImage = importedImages[frame]
+        if (existingStrokes.isEmpty() && existingImage == null) return
+
+        val snapshot = ClearSnapshot(existingStrokes.toList(), existingImage)
+        clearUndoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+        clearRedoSnapshots.remove(frame)
+
+        frames.remove(frame)
         redoFrames.remove(frame)
-        notes.remove(frame)
-        noteColors.remove(frame)
         importedImages.remove(frame)
+        // Keep notes and noteColors: clearing the canvas must not erase its text.
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
@@ -2766,6 +2805,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val initialPressure = event.pressure.coerceIn(0.05f, 1f)
                 val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
                 redoFrames.remove(frame)
+                clearRedoSnapshots.remove(frame)
                 current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 strokes().add(current!!)
                 invalidate()
@@ -2863,6 +2903,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidateAllFrameCaches()
         frames.clear()
         redoFrames.clear()
+        clearUndoSnapshots.clear()
+        clearRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
         importedImages.clear()
