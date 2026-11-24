@@ -207,7 +207,7 @@ class MainActivity : Activity() {
         }
         top.addView(status, LinearLayout.LayoutParams(0, -1, 1f))
         val brand = TextView(this).apply {
-            text = "BV’StoryboardStudio"
+            text = "BV'Storyboarder"
             setTextColor(Color.WHITE)
             textSize = 16f
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
@@ -321,7 +321,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             // Buttons touch directly: no margins or added gaps.
-            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)))
+            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
         }
 
         addToolCell(toolRow1, tool("ic_pencil", "Lápiz") {
@@ -382,7 +382,7 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)))
+            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
@@ -410,6 +410,8 @@ class MainActivity : Activity() {
                 isAllCaps = false
                 minWidth = 0
                 minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
                 setTextColor(Color.LTGRAY)
                 background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
@@ -421,7 +423,7 @@ class MainActivity : Activity() {
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)))
+            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(0, 0, 0, 0) })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
@@ -462,7 +464,9 @@ class MainActivity : Activity() {
         val sliderRail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(5), 0, dp(5))
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
         }
         sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
         sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
@@ -575,7 +579,7 @@ class MainActivity : Activity() {
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(child.paddingLeft, dp(3), child.paddingRight, 0)
+                    child.setPadding(child.paddingLeft, dp(4), child.paddingRight, 0)
                     child.gravity = Gravity.CENTER
                 }
             }
@@ -594,7 +598,6 @@ class MainActivity : Activity() {
                     frameDurations[index] = duration
                     updateFrameStatus()
                     updateTimeline()
-                    recordHistory()
                     scheduleAutosave()
                 }
             }
@@ -604,7 +607,6 @@ class MainActivity : Activity() {
                     frameDurations[index + 1] = secondDuration
                     updateFrameStatus()
                     updateTimeline()
-                    recordHistory()
                     scheduleAutosave()
                 }
             }
@@ -622,6 +624,10 @@ class MainActivity : Activity() {
                 timelineView.setPlayhead(position)
             }
             onMoveFrame = { from, to -> moveFrame(from, to) }
+            onResizeFinished = {
+                recordHistory()
+                scheduleAutosave()
+            }
             onSplitFrame = { index, firstDuration -> splitFrame(index, firstDuration) }
             onRequestAudio = { chooseAudio() }
             projectLabel = projectName
@@ -1582,11 +1588,17 @@ class MainActivity : Activity() {
         restoringSession = true
         try {
             stopPlayback()
-            mediaPlayer?.release()
-            mediaPlayer = null
-            audioUri = null
-            audioDurationMs = 0
-            waveform = FloatArray(0)
+            val savedAudioRaw = root.optString("audioUri", "")
+            val savedAudio = if (savedAudioRaw == "null") "" else savedAudioRaw
+            val currentAudio = audioUri?.toString().orEmpty()
+            val sameAudioSource = savedAudio == currentAudio
+            if (!sameAudioSource) {
+                mediaPlayer?.release()
+                mediaPlayer = null
+                audioUri = null
+                audioDurationMs = 0
+                waveform = FloatArray(0)
+            }
 
             projectName = root.optString("projectName", "Mi storyboard")
             if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
@@ -1605,8 +1617,7 @@ class MainActivity : Activity() {
             currentFrame = root.optInt("currentFrame", 0).coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
 
-            val savedAudio = root.optString("audioUri", "")
-            if (savedAudio.isNotBlank() && savedAudio != "null") {
+            if (!sameAudioSource && savedAudio.isNotBlank() && savedAudio != "null") {
                 attachAudio(Uri.parse(savedAudio), persistPermission = false)
             }
             updateFrameStatus()
@@ -1927,6 +1938,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     var onBoundaryChanged: ((Int, Int, Int) -> Unit)? = null
     var onSeek: ((Int) -> Unit)? = null
     var onMoveFrame: ((Int, Int) -> Unit)? = null
+    var onResizeFinished: (() -> Unit)? = null
     var onSplitFrame: ((Int, Int) -> Unit)? = null
     var splitMode: Boolean = false
     var onRequestAudio: (() -> Unit)? = null
@@ -1991,13 +2003,14 @@ class TimelineView(context: android.content.Context) : View(context) {
     private var activeIndex = -1
     private var downX = 0f
     private var downY = 0f
+    private var lastTouchX = 0f
     private var originalDuration = 0
     private var originalNextDuration = 0
     private var lastDuration = 0
     private var lastNextDuration = 0
     private var dragTarget = -1
 
-    private enum class GestureMode { NONE, RESIZE, MOVE, SCRUB }
+    private enum class GestureMode { NONE, RESIZE, MOVE, SCRUB, AUDIO_PENDING, PAN_AUDIO }
 
     fun setData(
         newDurations: List<Int>,
@@ -2241,6 +2254,7 @@ class TimelineView(context: android.content.Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 downY = event.y
+                lastTouchX = event.x
                 activeIndex = hitFrame(event.x, event.y)
                 if (splitMode && activeIndex >= 0) {
                     val rect = frameRect(activeIndex)
@@ -2265,7 +2279,12 @@ class TimelineView(context: android.content.Context) : View(context) {
                     gestureMode = GestureMode.NONE
                     return true
                 }
-                if (nearPlayhead || event.y in audioTop..(audioTop + audioHeight) || event.y <= rulerHeight) {
+                if (event.y in audioTop..(audioTop + audioHeight)) {
+                    // A tap on the audio lane seeks; a horizontal drag pans the timeline.
+                    // This prevents dragging the audio strip from pulling the playhead.
+                    gestureMode = GestureMode.AUDIO_PENDING
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                } else if (nearPlayhead || event.y <= rulerHeight) {
                     gestureMode = GestureMode.SCRUB
                     seekFromTimelineX(event.x)
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -2292,6 +2311,20 @@ class TimelineView(context: android.content.Context) : View(context) {
             MotionEvent.ACTION_MOVE -> {
                 when (gestureMode) {
                     GestureMode.SCRUB -> seekFromTimelineX(event.x)
+                    GestureMode.AUDIO_PENDING -> {
+                        val deltaFromDown = event.x - downX
+                        if (kotlin.math.abs(deltaFromDown) >= 8f * density) {
+                            gestureMode = GestureMode.PAN_AUDIO
+                            val scroll = parent as? HorizontalScrollView
+                            scroll?.scrollBy((lastTouchX - event.x).toInt(), 0)
+                        }
+                        lastTouchX = event.x
+                    }
+                    GestureMode.PAN_AUDIO -> {
+                        val scroll = parent as? HorizontalScrollView
+                        scroll?.scrollBy((lastTouchX - event.x).toInt(), 0)
+                        lastTouchX = event.x
+                    }
                     GestureMode.RESIZE -> {
                         val deltaMs = ((event.x - downX) / pixelsPerSecond * 1000f).toInt()
                         val minDuration = 100
@@ -2328,7 +2361,11 @@ class TimelineView(context: android.content.Context) : View(context) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (gestureMode == GestureMode.SCRUB) seekFromTimelineX(event.x)
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    if (gestureMode == GestureMode.SCRUB) seekFromTimelineX(event.x)
+                    else if (gestureMode == GestureMode.AUDIO_PENDING) seekFromTimelineX(downX)
+                }
+                if (gestureMode == GestureMode.RESIZE) onResizeFinished?.invoke()
                 if (gestureMode == GestureMode.MOVE && activeIndex >= 0 && dragTarget >= 0 && dragTarget != activeIndex) {
                     onMoveFrame?.invoke(activeIndex, dragTarget)
                 }
@@ -2484,9 +2521,9 @@ private class VerticalSliderView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val cx = 2f * density
-        val top = 5f * density
-        val bottom = height - 9f * density
+        val cx = 8f * density
+        val top = 15f * density
+        val bottom = height - 15f * density
         paint.color = Color.rgb(135, 135, 135)
         paint.strokeWidth = 3f * density
         canvas.drawLine(cx, top, cx, bottom, paint)
@@ -2504,7 +2541,7 @@ private class VerticalSliderView(
             paint.color = Color.WHITE
             // The value is beside the thumb, not above it.
             canvas.drawText(value.toString(), cx + thumbRadius + 4f * density,
-                (y + 3f * density).coerceIn(9f * density, height - 2f * density), paint)
+                (y + 3f * density).coerceIn(15f * density, height - 15f * density), paint)
         }
         paint.textAlign = Paint.Align.LEFT
     }
@@ -2512,8 +2549,8 @@ private class VerticalSliderView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
             showValue = true
-            val top = 5f * density
-            val bottom = height - 9f * density
+            val top = 15f * density
+            val bottom = height - 15f * density
             val fraction = (1f - ((event.y - top) / (bottom - top).coerceAtLeast(1f))).coerceIn(0f, 1f)
             val next = (minimum + fraction * (maximum - minimum)).toInt().coerceIn(minimum, maximum)
             if (next != value) {
@@ -2569,6 +2606,12 @@ class DrawingView(context: android.content.Context) : View(context) {
     // Imported bitmaps are immutable after fitting; reuse their PNG/Base64 payload across
     // history snapshots instead of recompressing the same image on every edit.
     private val encodedImageCache = java.util.WeakHashMap<Bitmap, String>()
+    // Keep a few recently decoded imports alive so undo/redo does not decode the same
+    // large PNG/Base64 payload on every restoration.
+    private data class DecodedImageEntry(val encoded: String, val bitmap: Bitmap)
+    private val decodedImageCache = object : LinkedHashMap<String, DecodedImageEntry>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 3
+    }
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
     private var hue = 0f
     private var saturation = 1f
@@ -3217,8 +3260,17 @@ class DrawingView(context: android.content.Context) : View(context) {
             if (loadedStrokes.isNotEmpty()) frames[index] = loadedStrokes
             val imageData = frameObject.optString("importedImage", "")
             if (imageData.isNotBlank()) try {
-                val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.let { importedImages[index] = it }
+                val cacheKey = "${imageData.hashCode()}:${imageData.length}"
+                val cached = decodedImageCache[cacheKey]
+                val bitmap = if (cached != null && cached.encoded == imageData && !cached.bitmap.isRecycled) {
+                    cached.bitmap
+                } else {
+                    val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
+                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.also {
+                        decodedImageCache[cacheKey] = DecodedImageEntry(imageData, it)
+                    }
+                }
+                if (bitmap != null) importedImages[index] = bitmap
             } catch (_: Exception) { }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {

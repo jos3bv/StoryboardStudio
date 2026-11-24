@@ -4,7 +4,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/AppTheme"
-        android:label="Storyboard Studio"
+        android:label="BV'Storyboarder"
         android:allowBackup="true"
         android:supportsRtl="true">
         <activity
