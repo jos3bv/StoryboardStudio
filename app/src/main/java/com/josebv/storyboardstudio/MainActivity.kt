@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var durationLabel: TextView
     private lateinit var playPauseButton: Button
+    private var headerStatusMessage: String = ""
     private var paletteDialog: AlertDialog? = null
     private var mediaPlayer: MediaPlayer? = null
     private var sequencePlaying = false
