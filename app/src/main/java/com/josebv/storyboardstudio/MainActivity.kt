@@ -53,9 +53,9 @@ class MainActivity : Activity() {
     private var sequenceStartUptime = 0L
     private var sequenceStartPosition = 0
     private val appStorageDirectory by lazy {
-        File(getExternalFilesDir(null) ?: filesDir, "StoryboardStudio")
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Storyboarder")
     }
-    private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.json") }
+    private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.sbd") }
     private val sessionsDirectory by lazy { File(appStorageDirectory, "Sessions") }
     private val exportsDirectory by lazy { File(appStorageDirectory, "Exports/PNG") }
     private val pdfDirectory by lazy { File(appStorageDirectory, "Exports/PDF") }
@@ -111,11 +111,31 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         buildInterface()
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 910)
+        } else {
+            initializeSessionStorage()
+        }
+    }
+
+    private fun initializeSessionStorage() {
         prepareStorageFolders()
         migratePreviousStorage()
         loadSession()
         handler.removeCallbacks(autosaveRunnable)
         handler.postDelayed(autosaveRunnable, 15_000)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 910) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                initializeSessionStorage()
+            } else {
+                setStatus("Se necesita permiso de almacenamiento para usar Documentos/Storyboarder")
+                Toast.makeText(this, "Autoriza el almacenamiento para guardar sesiones en Documentos/Storyboarder", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun buildInterface() {
@@ -281,7 +301,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(dp(1), dp(2), dp(1), dp(2))
+                setMargins(dp(2), dp(2), dp(2), dp(2))
             })
         }
 
@@ -436,20 +456,20 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
-        addIconCompactButton(shotGroup, "ic_duration_down", "Reducir duración") { changeDuration(-500) }
-        addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
-        addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
-        addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
         shotLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 10f
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(5), 0, dp(3), 0)
+            gravity = Gravity.CENTER
+            setPadding(dp(4), 0, dp(4), 0)
             contentDescription = "Plano seleccionado y duración"
         }
-        shotGroup.addView(shotLabel, LinearLayout.LayoutParams(dp(118), -1))
+        shotGroup.addView(shotLabel, LinearLayout.LayoutParams(dp(112), -1))
+        addIconCompactButton(shotGroup, "ic_duration_down", "Reducir duración") { changeDuration(-500) }
+        addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
+        addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
+        addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
         toolbar.addView(shotGroup, LinearLayout.LayoutParams(-2, -1).apply { gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL })
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
@@ -544,12 +564,37 @@ class MainActivity : Activity() {
         val size = dp(sizeDp)
         drawable.setBounds(0, 0, size, size)
         button.text = ""
+        drawable.alpha = 191
         button.setCompoundDrawables(null, drawable, null, null)
-        button.setOnTouchListener { view, event ->
-            val icon = (view as? Button)?.compoundDrawables?.get(1)
+        var iconHovered = false
+        var pressReleaseRunnable: Runnable? = null
+        fun refreshIconAlpha(alpha: Int) {
+            button.compoundDrawables.getOrNull(1)?.alpha = alpha
+        }
+        button.setOnHoverListener { _, event ->
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_HOVER_ENTER -> icon?.alpha = 145
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_HOVER_EXIT -> icon?.alpha = 255
+                MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                    iconHovered = true
+                    refreshIconAlpha(230)
+                }
+                MotionEvent.ACTION_HOVER_EXIT -> {
+                    iconHovered = false
+                    refreshIconAlpha(191)
+                }
+            }
+            false
+        }
+        button.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressReleaseRunnable?.let { handler.removeCallbacks(it) }
+                    refreshIconAlpha(255)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val reset = Runnable { refreshIconAlpha(if (iconHovered) 230 else 191) }
+                    pressReleaseRunnable = reset
+                    handler.postDelayed(reset, 150)
+                }
             }
             false
         }
@@ -1317,10 +1362,10 @@ class MainActivity : Activity() {
             val base = projectName.trim().ifBlank { "Storyboard" }
                 .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]"), "_")
             val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-            val file = File(sessionsDirectory, "${base}_$stamp.storyboard.json")
+            val file = File(sessionsDirectory, "${base}_$stamp.sbd")
             file.writeText(buildSessionJson().toString(2))
             setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
-            Toast.makeText(this, "Sesión guardada en Sessions/${file.name}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Sesión guardada en Documentos/Storyboarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("No se pudo guardar la copia: ${e.message}")
         }
@@ -1328,12 +1373,12 @@ class MainActivity : Activity() {
 
     private fun showLocalSessionsDialog() {
         val files = sessionsDirectory.listFiles { file ->
-            file.isFile && file.name.endsWith(".storyboard.json")
+            file.isFile && (file.name.endsWith(".sbd") || file.name.endsWith(".storyboard.json"))
         }?.sortedByDescending { it.lastModified() }.orEmpty()
         if (files.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("Sesiones guardadas")
-                .setMessage("Todavía no hay copias guardadas en la aplicación.")
+                .setMessage("Todavía no hay sesiones guardadas en Documentos/Storyboarder/Sessions.")
                 .setPositiveButton("Aceptar", null)
                 .show()
             return
@@ -1829,7 +1874,7 @@ class TimelineView(context: android.content.Context) : View(context) {
                 if (audioId != 0) {
                     val bitmap = BitmapFactory.decodeResource(resources, audioId)
                     if (bitmap != null) {
-                        val targetW = 125f * density
+                        val targetW = 104f * density
                         val targetH = targetW * bitmap.height / bitmap.width
                         val dst = RectF(width / 2f - targetW / 2f,
                             audioTop + audioHeight / 2f - targetH / 2f,
@@ -1875,6 +1920,11 @@ class TimelineView(context: android.content.Context) : View(context) {
 
                 // The audio lane and playhead handle always scrub the complete audio duration,
                 // including sections where no storyboard card exists.
+                if (audioDurationMs <= 0 && event.y in audioTop..(audioTop + audioHeight)) {
+                    onRequestAudio?.invoke()
+                    gestureMode = GestureMode.NONE
+                    return true
+                }
                 if (nearPlayhead || event.y in audioTop..(audioTop + audioHeight) || event.y <= rulerHeight) {
                     gestureMode = GestureMode.SCRUB
                     seekFromTimelineX(event.x)
@@ -2014,7 +2064,7 @@ private class HueSatValPickerView(
         paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED), null)
         canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
         paint.shader = null
-        val half = radius * 0.34f
+        val half = radius * 0.39f
         square = RectF(cx-half, cy-half, cx+half, cy+half)
         paint.style = Paint.Style.FILL
         paint.color = Color.HSVToColor(floatArrayOf(hue,1f,1f))
@@ -2070,6 +2120,7 @@ private class VerticalSliderView(
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var value = initialValue.coerceIn(minimum, maximum)
+    private var showValue = false
     private val labelHeight = 20f * density
     private val thumbRadius = 6f * density
 
@@ -2094,13 +2145,18 @@ private class VerticalSliderView(
         paint.textSize = 9f * density
         paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
         if (shortLabel.isNotBlank()) canvas.drawText(shortLabel, cx, 11f * density, paint)
-        paint.textSize = 8f * density
-        canvas.drawText(value.toString(), cx, height - 1f * density, paint)
+        if (showValue) {
+            paint.textSize = 9f * density
+            paint.textAlign = Paint.Align.CENTER
+            paint.color = Color.WHITE
+            canvas.drawText(value.toString(), cx, (y - 11f * density).coerceIn(10f * density, height - 2f * density), paint)
+        }
         paint.textAlign = Paint.Align.LEFT
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+            showValue = true
             val top = 5f * density
             val bottom = height - 9f * density
             val fraction = (1f - ((event.y - top) / (bottom - top).coerceAtLeast(1f))).coerceIn(0f, 1f)
@@ -2114,6 +2170,8 @@ private class VerticalSliderView(
             return true
         }
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            showValue = false
+            invalidate()
             parent?.requestDisallowInterceptTouchEvent(false)
             return true
         }
@@ -2453,6 +2511,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun drawStroke(canvas: Canvas, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
+        if (stroke.erase && stroke.points.size == 1) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND

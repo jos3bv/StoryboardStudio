@@ -45,3 +45,13 @@ Mejoras en carga de audio anclada al viewport, borrador real con borrado de píx
 
 ## Versión 0.9.9
 El cabezal de reproducción se puede arrastrar por toda la duración del audio, incluso fuera de los planos. La barra de controles deja las herramientas de planos a la izquierda, centra la reproducción en el espacio restante y fija la navegación/zoom a la derecha. El ajuste de una transición modifica las duraciones de ambos planos contiguos de forma inversa, manteniendo fijo el final del segundo hasta que alcanza 0,5 s; a partir de ese límite, el extremo final también puede desplazarse.
+
+
+## Versión 0.9.10
+- Los valores de tamaño y opacidad aparecen junto al control únicamente mientras se manipula.
+- El borrador no muestra un punto inicial antes de comenzar el movimiento.
+- Etiqueta del plano centrada entre eliminar y los controles de duración.
+- La pista de audio vacía abre el selector de audio y el botón visual es más compacto.
+- Sesiones y autosave en Documentos/Storyboarder; archivos de sesión con extensión corta `.sbd`.
+- Cuadrado cromático ampliado con separación respecto de la rueda.
+- Estados de iconos SVG: 75% normal, 90% hover y 100% al presionar, con breve retención del estado presionado.
