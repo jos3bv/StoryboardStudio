@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -40,7 +41,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : Activity() {
-    companion object { private const val REQUEST_IMAGE = 8042 }
+    companion object { private const val REQUEST_IMAGE = 8042; private const val REQUEST_SRT = 8043 }
     private lateinit var drawing: DrawingView
     private lateinit var timelineView: TimelineView
     private lateinit var status: TextView
@@ -325,7 +326,6 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow1, tool("ic_text", "Texto") { addTextNote() })
 
-        addToolCell(toolRow2, tool("ic_import_image", "Importar imagen") { chooseImage() })
         addToolCell(toolRow2, tool("ic_pressure", "Presión del lápiz") {
             drawing.configureBrush(
                 drawing.activeBrushSize(),
@@ -342,6 +342,47 @@ class MainActivity : Activity() {
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
             setMargins(dp(0.1f), dp(0.1f), dp(0.1f), dp(0.1f))
         })
+
+        val importLabel = TextView(this).apply {
+            text = "Importar"
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+            gravity = Gravity.CENTER
+        }
+        sideContent.addView(importLabel, LinearLayout.LayoutParams(-1, dp(25)))
+        val imports = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        fun importButton(iconName: String, description: String, action: () -> Unit) {
+            val b = Button(this).apply {
+                text = ""
+                contentDescription = description
+                textSize = 10f
+                isAllCaps = false
+                minWidth = 0
+                minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
+                setTextColor(Color.LTGRAY)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), Color.rgb(205, 205, 205))
+                }
+                elevation = 0f
+                stateListAnimator = null
+                setPadding(0, 0, 0, 0)
+                setOnClickListener { action() }
+                setButtonIcon(this, iconName, 34)
+            }
+            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
+            })
+        }
+        importButton("ic_import_image", "Importar imágenes") { chooseImage() }
+        // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
+        importButton("ic_export_pdf", "Importar archivo SRT") { chooseSrt() }
+        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(62)))
 
         val exportSpacer = View(this)
         sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.85f))
@@ -1030,6 +1071,86 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_IMAGE)
     }
 
+    private fun chooseSrt() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/x-subrip", "application/octet-stream", "text/plain"))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(intent, REQUEST_SRT)
+    }
+
+    private data class SrtBlock(val startMs: Int, val endMs: Int, val text: String)
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }
+
+    private fun parseSrtBlocks(source: String): List<SrtBlock> {
+        val normalized = source.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n')
+        val timestamp = Regex("(\\d{2,}):(\\d{2}):(\\d{2})[,\\.](\\d{1,3})\\s*-->\\s*(\\d{2,}):(\\d{2}):(\\d{2})[,\\.](\\d{1,3})")
+        fun toMs(h: String, m: String, sec: String, fraction: String): Int {
+            val millis = fraction.padEnd(3, '0').take(3).toInt()
+            return (((h.toLong() * 3600 + m.toLong() * 60 + sec.toLong()) * 1000L) + millis).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
+        val lines = normalized.lines()
+        val blocks = mutableListOf<SrtBlock>()
+        var i = 0
+        while (i < lines.size) {
+            val match = timestamp.find(lines[i])
+            if (match == null) { i++; continue }
+            val start = toMs(match.groupValues[1], match.groupValues[2], match.groupValues[3], match.groupValues[4])
+            val end = toMs(match.groupValues[5], match.groupValues[6], match.groupValues[7], match.groupValues[8])
+            i++
+            val textLines = mutableListOf<String>()
+            while (i < lines.size && lines[i].isNotBlank() && timestamp.find(lines[i]) == null) {
+                textLines.add(lines[i].trim())
+                i++
+            }
+            val text = textLines.joinToString(" ").trim()
+            if (text.isNotBlank() && end > start) blocks.add(SrtBlock(start, end, text))
+        }
+        return blocks
+    }
+
+    private fun importSrtAsNewSession(displayName: String, source: String) {
+        val blocks = parseSrtBlocks(source)
+        if (blocks.isEmpty()) throw IllegalArgumentException("No se encontraron bloques con tiempos y textos válidos")
+
+        // Preserve the session currently open before replacing the workspace.
+        saveSession(showMessage = false)
+        saveLocalSnapshot()
+
+        stopPlayback()
+        mediaPlayer?.release()
+        mediaPlayer = null
+        audioUri = null
+        audioDurationMs = 0
+        waveform = FloatArray(0)
+
+        projectName = displayName.substringBeforeLast('.', displayName).ifBlank { "Storyboard SRT" }
+        frameDurations.clear()
+        frameDurations.addAll(blocks.map { (it.endMs - it.startMs).coerceAtLeast(100) })
+        currentFrame = 0
+        drawing.clearProject()
+        blocks.forEachIndexed { index, block ->
+            drawing.setFrame(index)
+            drawing.setFrameText(block.text, drawing.currentColor())
+        }
+        drawing.setFrame(0)
+        drawing.resetViewport()
+        if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
+        updateFrameStatus()
+        updateTimeline()
+        saveSession(showMessage = false)
+        saveLocalSnapshot()
+        setStatus("SRT importado · ${blocks.size} planos creados")
+        Toast.makeText(this, "Sesión creada: $projectName · ${blocks.size} planos", Toast.LENGTH_LONG).show()
+    }
+
     private fun simpleSeekListener(onChanged: () -> Unit) =
         object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChanged()
@@ -1052,6 +1173,16 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
         when (requestCode) {
+            REQUEST_SRT -> {
+                try {
+                    val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Importado.srt"
+                    val srtText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                        ?: throw IllegalArgumentException("No se pudo leer el archivo SRT")
+                    importSrtAsNewSession(displayName, srtText)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "No se pudo importar el SRT: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
             REQUEST_IMAGE -> {
                 try {
                     if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
