@@ -228,7 +228,7 @@ class MainActivity : Activity() {
             scheduleAutosave()
         }
         inlineColorPicker = picker
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.42f).apply {
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.05f).apply {
             setMargins(0, dp(2), 0, dp(2))
         })
 
@@ -240,7 +240,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(22)))
+        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(24)))
         val grayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -256,12 +256,12 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(22), 1f).apply {
+            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
                 setMargins(dp(1), 0, dp(1), 0)
             })
         }
-        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(22)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(48)))
+        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)))
         refreshRecentColorSwatches()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
@@ -278,7 +278,10 @@ class MainActivity : Activity() {
                 textSize = 20f
                 isAllCaps = false
                 setTextColor(Color.LTGRAY)
-                background = null
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), Color.rgb(205, 205, 205))
+                }
                 elevation = 0f
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
@@ -302,8 +305,8 @@ class MainActivity : Activity() {
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
-            row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(dp(1), dp(2), dp(1), dp(2))
+            row.addView(button, LinearLayout.LayoutParams(0, dp(56), 1f).apply {
+                setMargins(dp(5), dp(5), dp(5), dp(5))
             })
         }
 
@@ -329,14 +332,14 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { confirmClear() })
 
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(48)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(48)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(96)).apply {
-            setMargins(0, dp(4), 0, dp(4))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(66)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(66)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(132)).apply {
+            setMargins(0, dp(12), 0, dp(4))
         })
 
         val exportSpacer = View(this)
-        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.15f))
+        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.85f))
         val exportLabel = TextView(this).apply {
             text = "Exportar"
             setTextColor(Color.LTGRAY)
@@ -357,21 +360,24 @@ class MainActivity : Activity() {
                 minWidth = 0
                 minimumWidth = 0
                 setTextColor(Color.LTGRAY)
-                background = null
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), Color.rgb(205, 205, 205))
+                }
                 elevation = 0f
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
                 setButtonIcon(this, iconName, 34)
             }
-            exports.addView(b, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                setMargins(dp(1), dp(2), dp(1), dp(2))
+            exports.addView(b, LinearLayout.LayoutParams(0, dp(56), 1f).apply {
+                setMargins(dp(5), dp(2), dp(5), dp(2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
         exportButton("ic_export_pdf", "Exportar PDF") { exportPdf() }
-        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(43)))
+        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(62)))
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
         // Sliders are positioned beside the canvas, matching the annotated layout.
@@ -741,7 +747,7 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            row.addView(chip, LinearLayout.LayoutParams(0, dp(22), 1f).apply {
+            row.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
                 setMargins(dp(1), 0, dp(1), 0)
             })
         }
@@ -2104,9 +2110,7 @@ private class HueSatValPickerView(
     private var value = initialValue
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val density = resources.displayMetrics.density
-    private var cx = 0f
-    private var cy = 0f
-    private var radius = 0f
+    private var hueBar = RectF()
     private var square = RectF()
 
     fun setColor(color: Int) {
@@ -2120,54 +2124,71 @@ private class HueSatValPickerView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        cx = width / 2f; cy = height / 2f
-        radius = min(width, height) * 0.47f
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 27f * density
-        paint.shader = SweepGradient(cx, cy, intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED), null)
-        canvas.drawCircle(cx, cy, radius - paint.strokeWidth/2f, paint)
-        paint.shader = null
-        val half = radius * 0.39f
-        square = RectF(cx-half, cy-half, cx+half, cy+half)
+        val inset = 2f * density
+        val barHeight = 24f * density
+        hueBar = RectF(inset, inset, width - inset, inset + barHeight)
         paint.style = Paint.Style.FILL
-        paint.color = Color.HSVToColor(floatArrayOf(hue,1f,1f))
+        paint.shader = LinearGradient(
+            hueBar.left, 0f, hueBar.right, 0f,
+            intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED),
+            null, Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(hueBar, paint)
+        paint.shader = null
+        val hueX = hueBar.left + (hue / 360f) * hueBar.width()
+        paint.color = Color.WHITE
+        canvas.drawRect(hueX - 2f * density, hueBar.top - 2f * density,
+            hueX + 2f * density, hueBar.bottom + 2f * density, paint)
+        paint.color = Color.BLACK
+        paint.strokeWidth = 1f * density
+        paint.style = Paint.Style.STROKE
+        canvas.drawRect(hueBar, paint)
+        paint.style = Paint.Style.FILL
+
+        val availableTop = hueBar.bottom + 12f * density
+        val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
+        val squareWidth = (width - 4f * density).coerceAtLeast(1f)
+        val squareHeight = min(squareWidth * 0.74f, availableHeight).coerceAtLeast(1f)
+        val left = (width - squareWidth) / 2f
+        square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
+        paint.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
         canvas.drawRect(square, paint)
-        paint.shader = LinearGradient(square.left, square.top, square.right, square.top, Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        canvas.drawRect(square, paint); paint.shader = null
-        paint.shader = LinearGradient(square.left, square.top, square.left, square.bottom, Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
-        canvas.drawRect(square, paint); paint.shader = null
+        paint.shader = LinearGradient(square.left, square.top, square.right, square.top,
+            Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        canvas.drawRect(square, paint)
+        paint.shader = null
+        paint.shader = LinearGradient(square.left, square.top, square.left, square.bottom,
+            Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
+        canvas.drawRect(square, paint)
+        paint.shader = null
+
         val sx = square.left + saturation * square.width()
         val sy = square.bottom - value * square.height()
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f*density; paint.color = Color.WHITE
-        canvas.drawCircle(sx, sy, 7f*density, paint)
-        val angle = Math.toRadians(hue.toDouble())
-        val hx = cx + kotlin.math.cos(angle).toFloat() * (radius - 13f*density)
-        val hy = cy + kotlin.math.sin(angle).toFloat() * (radius - 13f*density)
-        paint.color = Color.WHITE; paint.strokeWidth = 3f*density
-        canvas.drawCircle(hx,hy,13f*density,paint)
-        paint.style = Paint.Style.FILL; paint.color = Color.HSVToColor(floatArrayOf(hue,saturation,value))
-        canvas.drawCircle(hx,hy,10f*density,paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * density
+        paint.color = Color.WHITE
+        canvas.drawCircle(sx, sy, 7f * density, paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.BLACK
+        paint.strokeWidth = 1f * density
+        canvas.drawRect(square, paint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked != MotionEvent.ACTION_DOWN && event.actionMasked != MotionEvent.ACTION_MOVE) return true
-        val dx = event.x-cx; val dy=event.y-cy
-        val squareHit = RectF(square).apply { inset(-10f * density, -10f * density) }
-        val ringInner = radius - 31f * density
-        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-        if (squareHit.contains(event.x, event.y)) {
-            if (square.contains(event.x, event.y)) {
-                saturation=((event.x-square.left)/square.width()).coerceIn(0f,1f)
-                value=(1f-(event.y-square.top)/square.height()).coerceIn(0f,1f)
+        when {
+            hueBar.contains(event.x, event.y) -> {
+                hue = (((event.x - hueBar.left) / hueBar.width()) * 360f).coerceIn(0f, 360f)
             }
-            // Touches in the safety gap are deliberately ignored.
-        } else if (distance >= ringInner && distance <= radius + 8f * density) {
-            var degrees=Math.toDegrees(kotlin.math.atan2(dy.toDouble(),dx.toDouble())).toFloat()
-            if (degrees<0f) degrees+=360f
-            hue=degrees
-        } else {
-            return true
+            square.contains(event.x, event.y) -> {
+                saturation = ((event.x - square.left) / square.width()).coerceIn(0f, 1f)
+                value = (1f - (event.y - square.top) / square.height()).coerceIn(0f, 1f)
+            }
+            else -> return true
         }
-        invalidate(); onColorChanged(hue,saturation,value); return true
+        invalidate()
+        onColorChanged(hue, saturation, value)
+        return true
     }
 }
 

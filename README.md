@@ -84,3 +84,10 @@ El cabezal de reproducción se puede arrastrar por toda la duración del audio, 
 - Manejadores de tamaño y opacidad simplificados: se conserva únicamente el indicador alargado.
 - Historial de colores y escala de grises con bloques de ancho proporcional y márgenes uniformes.
 - Controles de la barra de tiempo alineados al eje vertical central del slider de zoom.
+
+
+## Versión 0.9.14
+- Selector cromático reorganizado: barra horizontal de tono en la parte superior y área rectangular de saturación/valor debajo.
+- Eliminada la rueda cromática circular.
+- Panel izquierdo reorganizado según la referencia: muestras de color y grises en dos filas, herramientas en una cuadrícula de botones cuadrados delineados y exportaciones con el mismo lenguaje visual.
+- Ajustados tamaños, márgenes y separaciones para recuperar la composición compacta y alineada de la referencia.
