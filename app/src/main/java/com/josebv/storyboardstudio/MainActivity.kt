@@ -320,11 +320,8 @@ class MainActivity : Activity() {
         }
 
         fun addToolCell(row: LinearLayout, button: Button) {
-            // Buttons touch directly: no individual margins or added gaps.
-            val leadingGap = 0
-            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(leadingGap, 0, 0, 0)
-            })
+            // Buttons touch directly: no margins or added gaps.
+            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)))
         }
 
         addToolCell(toolRow1, tool("ic_pencil", "Lápiz") {
@@ -348,11 +345,10 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
 
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
-            setMargins(dp(0.1f), dp(0.1f), dp(0.1f), dp(0.1f))
-        })
+        // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(56)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(56)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(112)))
 
         val importLabel = TextView(this).apply {
             text = "Importar"
@@ -500,16 +496,16 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, dp(3), 0, 0)
+            setPadding(0, 0, 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
             setPadding(dp(10), 0, dp(10), 0)
         }
         val shotGroup = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
         }
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         cutModeButton = addIconCompactButton(shotGroup, "ic_cut_frame", "Cortar plano") {
@@ -642,8 +638,8 @@ class MainActivity : Activity() {
             setOnClickListener { chooseAudio() }
         }
         audioActionButton = replaceAudioButton
-        setButtonIcon(replaceAudioButton, "ic_replace_audio", 22, transparent = true)
-        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(28), dp(26),
+        setButtonIcon(replaceAudioButton, "ic_replace_audio", 32, transparent = true)
+        timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(40), dp(40),
             Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(4)
             bottomMargin = dp(3)
@@ -2565,6 +2561,9 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var brush = 4f
     private var eraserBrush = 20f
     private val importedImages = mutableMapOf<Int, Bitmap>()
+    // Imported bitmaps are immutable after fitting; reuse their PNG/Base64 payload across
+    // history snapshots instead of recompressing the same image on every edit.
+    private val encodedImageCache = java.util.WeakHashMap<Bitmap, String>()
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
     private var hue = 0f
     private var saturation = 1f
@@ -3152,8 +3151,14 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
             frameObject.put("strokes", strokeArray)
             importedImages[index]?.let { bitmap ->
-                val bytes = java.io.ByteArrayOutputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out); out.toByteArray() }
-                frameObject.put("importedImage", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                val encoded = encodedImageCache.getOrPut(bitmap) {
+                    val bytes = java.io.ByteArrayOutputStream().use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        out.toByteArray()
+                    }
+                    Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
+                frameObject.put("importedImage", encoded)
             }
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
