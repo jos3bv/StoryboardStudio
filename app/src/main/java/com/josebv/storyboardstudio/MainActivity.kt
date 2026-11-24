@@ -46,6 +46,7 @@ class MainActivity : Activity() {
     private lateinit var durationLabel: TextView
     private lateinit var playPauseButton: Button
     private lateinit var shotLabel: TextView
+    private lateinit var timelineZoomSeek: SeekBar
     private var headerStatusMessage: String = ""
     private var paletteDialog: AlertDialog? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -56,7 +57,7 @@ class MainActivity : Activity() {
         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Storyboarder")
     }
     private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.sbd") }
-    private val sessionsDirectory by lazy { File(appStorageDirectory, "Sessions") }
+    private val sessionsDirectory by lazy { File(appStorageDirectory, "sessions") }
     private val exportsDirectory by lazy { File(appStorageDirectory, "Exports/PNG") }
     private val pdfDirectory by lazy { File(appStorageDirectory, "Exports/PDF") }
     private var restoringSession = false
@@ -301,7 +302,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(dp(2), dp(2), dp(2), dp(2))
+                setMargins(0, dp(2), dp(4), dp(2))
             })
         }
 
@@ -363,7 +364,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                setMargins(dp(2), dp(2), dp(2), dp(2))
+                setMargins(0, dp(2), dp(4), dp(2))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -413,11 +414,11 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, dp(5), 0, dp(5))
         }
-        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(22), 0, 1f))
-        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(22), 0, 1f))
+        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
+        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
         canvasArea.addView(
             sliderRail,
-            FrameLayout.LayoutParams(dp(22), -1, Gravity.LEFT or Gravity.TOP).apply {
+            FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT or Gravity.TOP).apply {
                 leftMargin = 0
                 topMargin = dp(2)
                 bottomMargin = dp(2)
@@ -486,16 +487,17 @@ class MainActivity : Activity() {
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
-        addIconCompactButton(zoomGroup, "ic_zoom_out", "Ajustar timeline completo") { timelineView.zoomToFitAll() }
-        val zoomSeek = SeekBar(this).apply {
+        addIconCompactButton(zoomGroup, "ic_zoom_out", "Ajustar timeline completo") {
+            timelineZoomSeek.progress = timelineView.zoomToFitAll()
+        }
+        timelineZoomSeek = SeekBar(this).apply {
             max = 100
             progress = 35
             setOnSeekBarChangeListener(simpleSeekListener {
-                val factor = 0.55f + progress / 100f * 2.2f
-                timelineView.setZoomLevel(factor)
+                timelineView.setZoomProgress(progress)
             })
         }
-        zoomGroup.addView(zoomSeek, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
@@ -964,7 +966,11 @@ class MainActivity : Activity() {
     }
 
     private fun chooseImage() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "image/*" }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
         startActivityForResult(intent, REQUEST_IMAGE)
     }
 
@@ -992,6 +998,9 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQUEST_IMAGE -> {
                 try {
+                    if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                     contentResolver.openInputStream(uri).use { stream ->
                         val bitmap = BitmapFactory.decodeStream(stream)
                             ?: throw IllegalArgumentException("Formato de imagen no compatible")
@@ -1411,35 +1420,24 @@ class MainActivity : Activity() {
             selectAll()
         }
         AlertDialog.Builder(this)
-            .setTitle("Guardar sesión como archivo")
-            .setMessage("Elige un nombre para identificar este storyboard.")
+            .setTitle("Guardar sesión")
+            .setMessage("La sesión se guardará en Documentos/Storyboarder/sessions.")
             .setView(nameInput)
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Continuar") { _, _ ->
+            .setPositiveButton("Guardar") { _, _ ->
                 val name = nameInput.text.toString().trim()
                 if (name.isNotBlank()) projectName = name
+                if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
                 updateFrameStatus()
                 updateTimeline()
-                val safeName = projectName.trim().ifBlank { "Mi storyboard" }
-                    .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ _-]"), "")
-                    .replace(" ", "_")
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
-                    putExtra(Intent.EXTRA_TITLE, "$safeName.storyboard.json")
-                }
-                startActivityForResult(intent, 102)
+                saveLocalSnapshot()
                 scheduleAutosave()
             }
             .show()
     }
+
     private fun openSessionFile() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/json"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }
-        startActivityForResult(intent, 103)
+        showLocalSessionsDialog()
     }
 
     private fun confirmNewSession() {
@@ -1493,9 +1491,10 @@ class MainActivity : Activity() {
                 oldAutosave.copyTo(sessionFile, overwrite = false)
             }
             val oldSessions = File(oldRoot, "sessions")
-            if (oldSessions.isDirectory) {
+            val previousDocumentsSessions = File(appStorageDirectory, "Sessions")
+            listOf(oldSessions, previousDocumentsSessions).filter { it.isDirectory }.forEach { sourceDirectory ->
                 sessionsDirectory.mkdirs()
-                oldSessions.listFiles()?.filter { it.isFile }?.forEach { old ->
+                sourceDirectory.listFiles()?.filter { it.isFile }?.forEach { old ->
                     val target = File(sessionsDirectory, old.name)
                     if (!target.exists()) old.copyTo(target, overwrite = false)
                 }
@@ -1527,7 +1526,7 @@ class MainActivity : Activity() {
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
-                    Environment.DIRECTORY_DOCUMENTS + "/StoryboardStudio/" + subfolder
+                    Environment.DIRECTORY_DOCUMENTS + "/Storyboarder/Exports/" + subfolder
                 )
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
@@ -1548,7 +1547,7 @@ class MainActivity : Activity() {
         } else {
             // Android 6–9 fallback: app's Documents export folder (legacy shared-storage access is restricted).
             val base = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
-                "StoryboardStudio/$subfolder")
+                "Storyboarder/Exports/$subfolder")
             if (!base.exists() && !base.mkdirs()) {
                 throw IllegalStateException("No se pudo crear ${base.absolutePath}")
             }
@@ -1573,7 +1572,7 @@ class MainActivity : Activity() {
                 "application/pdf",
                 "PDF"
             ) { output -> pdf.writeTo(output) }
-            setStatus("PDF guardado en Documentos/StoryboardStudio/PDF")
+            setStatus("PDF guardado en Documentos/Storyboarder/Exports/PDF")
             Toast.makeText(this, "PDF exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PDF: ${e.message}")
@@ -1587,7 +1586,7 @@ class MainActivity : Activity() {
         try {
             val name = "${safeProjectFileName()}_plano_${(currentFrame + 1).toString().padStart(3, '0')}.png"
             writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportCurrent(output) }
-            setStatus("PNG guardado en Documentos/StoryboardStudio/PNG")
+            setStatus("PNG guardado en Documentos/Storyboarder/Exports/PNG")
             Toast.makeText(this, "Plano ${currentFrame + 1} exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PNG: ${e.message}")
@@ -1601,7 +1600,7 @@ class MainActivity : Activity() {
                 val name = "${safeProjectFileName()}_plano_${(i + 1).toString().padStart(3, '0')}.png"
                 writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportFrame(i, output) }
             }
-            setStatus("${frameDurations.size} PNG guardados en Documentos/StoryboardStudio/PNG")
+            setStatus("${frameDurations.size} PNG guardados en Documentos/Storyboarder/Exports/PNG")
             Toast.makeText(this, "${frameDurations.size} planos exportados a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PNG: ${e.message}")
@@ -1630,6 +1629,10 @@ class MainActivity : Activity() {
 }
 
 class TimelineView(context: android.content.Context) : View(context) {
+    companion object {
+        private const val MIN_ADJACENT_SHOT_MS = 500 // 0.5 seconds, never 5 seconds
+    }
+
     var onSelectFrame: ((Int) -> Unit)? = null
     var onDurationChanged: ((Int, Int) -> Unit)? = null
     var onBoundaryChanged: ((Int, Int, Int) -> Unit)? = null
@@ -1742,19 +1745,29 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
-    fun zoomToFitAll() {
+    fun zoomToFitAll(): Int {
         val scroll = parent as? HorizontalScrollView
         val viewport = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
         val totalSeconds = max(durations.sum(), audioDurationMs).coerceAtLeast(1) / 1000f
         pixelsPerSecond = (viewport / totalSeconds).coerceIn(8f, 420f)
+        val progress = (((pixelsPerSecond - 8f) / (420f - 8f)) * 100f).toInt().coerceIn(0, 100)
         requestLayout()
         invalidate()
         scroll?.post { scroll.scrollTo(0, 0) }
+        return progress
+    }
+
+    fun setZoomProgress(progress: Int) {
+        pixelsPerSecond = (8f + (progress.coerceIn(0, 100) / 100f) * (420f - 8f))
+            .coerceIn(8f, 420f)
+        requestLayout()
+        invalidate()
     }
 
     fun setZoomLevel(level: Float) {
-        pixelsPerSecond = (85f * level).coerceIn(22f, 420f)
-        requestLayout(); invalidate()
+        pixelsPerSecond = (85f * level).coerceIn(8f, 420f)
+        requestLayout()
+        invalidate()
     }
 
     fun centerOnPlayhead() {
@@ -1959,7 +1972,7 @@ class TimelineView(context: android.content.Context) : View(context) {
                         if (activeIndex < durations.lastIndex) {
                             // Move only the cut between these two shots: the next shot's end
                             // and every later shot's absolute position remain fixed.
-                            val minimumNext = min(500, originalNextDuration)
+                            val minimumNext = min(MIN_ADJACENT_SHOT_MS, originalNextDuration)
                             val transitionLimit = max(0, originalNextDuration - minimumNext)
                             val boundedDelta = deltaMs.coerceAtLeast(minDuration - originalDuration)
                             val adjustedCurrent = originalDuration + boundedDelta
@@ -2141,15 +2154,16 @@ private class VerticalSliderView(
             y + 14f * density, 4f * density, 4f * density, paint)
         paint.color = Color.WHITE
         canvas.drawCircle(cx, y, thumbRadius, paint)
-        paint.textAlign = Paint.Align.CENTER
+        paint.textAlign = Paint.Align.LEFT
         paint.textSize = 9f * density
         paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
         if (shortLabel.isNotBlank()) canvas.drawText(shortLabel, cx, 11f * density, paint)
         if (showValue) {
             paint.textSize = 9f * density
-            paint.textAlign = Paint.Align.CENTER
             paint.color = Color.WHITE
-            canvas.drawText(value.toString(), cx, (y - 11f * density).coerceIn(10f * density, height - 2f * density), paint)
+            // The value is beside the thumb, not above it.
+            canvas.drawText(value.toString(), cx + thumbRadius + 4f * density,
+                (y + 3f * density).coerceIn(9f * density, height - 2f * density), paint)
         }
         paint.textAlign = Paint.Align.LEFT
     }
@@ -2436,19 +2450,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
+        // The white sheet stays underneath the transparent ink layer. CLEAR erasing
+        // therefore removes only drawing pixels and reveals pure white paper.
+        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         val layer = canvas.saveLayer(boardBounds, null)
-        canvas.drawColor(Color.WHITE)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         current?.let { drawStroke(canvas, it) }
         canvas.restoreToCount(layer)
-        canvas.restore()
-
-        val border = Paint().apply {
-            color = Color.rgb(130, 145, 160)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        canvas.drawRect(left, top, left + w, top + h, border)
         canvas.restore()
     }
 
@@ -2511,7 +2519,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun drawStroke(canvas: Canvas, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
-        if (stroke.erase && stroke.points.size == 1) return
+        if (stroke.erase && stroke.points.size < 2) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
