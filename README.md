@@ -98,3 +98,8 @@ El cabezal de reproducción se puede arrastrar por toda la duración del audio, 
 - Ajustada la anchura útil del selector para dejar márgenes laterales como en la referencia.
 - Herramientas y exportaciones reorganizadas con botones cuadrados de tamaño fijo y separaciones uniformes más compactas; se elimina la distribución ponderada que separaba excesivamente las columnas.
 - Restaurado el acceso visible para agregar audio ( + ) y cambiarlo ( ↻ ); el botón actualiza su estado al cargar un archivo.
+
+
+## Versión 0.9.16
+- Unificados todos los márgenes del panel izquierdo a 2 dp (`dp(2)`): selector, muestras, herramientas y exportación.
+- No se modificó la lógica funcional ni la geometría interna del selector cromático.

@@ -33,6 +33,7 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import android.util.Base64
 import java.nio.ByteOrder
+import kotlin.math.roundToInt
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -204,7 +205,6 @@ class MainActivity : Activity() {
         }
         top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.72f))
         root.addView(top, LinearLayout.LayoutParams(-1, dp(50)))
-
         // Work area: left tool panel and a large central canvas.
         val work = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -230,7 +230,7 @@ class MainActivity : Activity() {
         }
         inlineColorPicker = picker
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.05f).apply {
-            setMargins(0, dp(1), 0, dp(1))
+            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -257,12 +257,12 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(dp(1), 1, dp(1), 1)
+            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
+                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
             })
         }
-        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(42)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(42)))
+        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)))
         refreshRecentColorSwatches()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(.2), dp(.2), dp(.2), dp(.2))
+                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
             })
         }
 
@@ -333,14 +333,14 @@ class MainActivity : Activity() {
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { confirmClear() })
 
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(56)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(56)))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(62)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(62)))
         sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(124)).apply {
-            setMargins(0, dp(1), 0, dp(1))
+            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
         })
 
         val exportSpacer = View(this)
-        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.65f))
+        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.85f))
         val exportLabel = TextView(this).apply {
             text = "Exportar"
             setTextColor(Color.LTGRAY)
@@ -372,7 +372,7 @@ class MainActivity : Activity() {
                 setButtonIcon(this, iconName, 34)
             }
             exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(dp(.2), dp(.2), dp(.2), dp(.2))
+                setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
@@ -395,7 +395,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
-        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
+        work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.17f))
 
         val canvasArea = FrameLayout(this).apply { setBackgroundColor(Color.rgb(48, 48, 48)) }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
@@ -750,7 +750,7 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
-                setMargins(dp(1), 1, dp(1), 1)
+                setMargins(dp(1), 0, dp(1), 0)
             })
         }
     }
@@ -766,6 +766,8 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).roundToInt()
 
     private fun addButton(parent: LinearLayout, label: String, action: () -> Unit) {
         val button = Button(this).apply {
