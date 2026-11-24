@@ -78,6 +78,11 @@ class MainActivity : Activity() {
     private var projectName = "Mi storyboard"
     private lateinit var projectTitleLabel: TextView
     private var updatingFromPlayback = false
+    private val undoHistory = ArrayDeque<String>()
+    private val redoHistory = ArrayDeque<String>()
+    private var restoringHistory = false
+    private var lastHistoryState: String? = null
+    private val maxHistorySteps = 10
 
     private val handler = Handler(Looper.getMainLooper())
     private val playbackUpdater = object : Runnable {
@@ -127,6 +132,7 @@ class MainActivity : Activity() {
         prepareStorageFolders()
         migratePreviousStorage()
         loadSession()
+        resetHistory()
         handler.removeCallbacks(autosaveRunnable)
         handler.postDelayed(autosaveRunnable, 15_000)
     }
@@ -145,7 +151,10 @@ class MainActivity : Activity() {
 
     private fun buildInterface() {
         drawing = DrawingView(this).apply {
-            onChanged = { scheduleAutosave() }
+            onChanged = {
+                if (!restoringHistory) recordHistory()
+                scheduleAutosave()
+            }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
         }
         if (recentColors.isEmpty()) {
@@ -231,7 +240,7 @@ class MainActivity : Activity() {
             scheduleAutosave()
         }
         inlineColorPicker = picker
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.05f).apply {
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 4.0f).apply {
             setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(10))
         })
 
@@ -385,7 +394,7 @@ class MainActivity : Activity() {
         sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(62)))
 
         val exportSpacer = View(this)
-        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.85f))
+        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.1f))
         val exportLabel = TextView(this).apply {
             text = "Exportar"
             setTextColor(Color.LTGRAY)
@@ -447,14 +456,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") {
-            drawing.undo()
-            scheduleAutosave()
-        }
-        addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") {
-            drawing.redo()
-            scheduleAutosave()
-        }
+        addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") { undoGlobal() }
+        addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") { redoGlobal() }
         canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
             leftMargin = dp(32)
             topMargin = dp(18)
@@ -551,8 +554,8 @@ class MainActivity : Activity() {
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
-        addIconCompactButton(zoomGroup, "ic_zoom_out", "Ajustar timeline completo") {
-            timelineZoomSeek.progress = timelineView.zoomToFitAll()
+        addIconCompactButton(zoomGroup, "ic_zoom_out", "Alejar timeline") {
+            timelineZoomSeek.progress = timelineView.changeZoom(1f / 1.25f)
         }
         timelineZoomSeek = SeekBar(this).apply {
             max = 100
@@ -565,11 +568,13 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
-        addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") { timelineView.changeZoom(1.25f) }
+        addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") {
+            timelineZoomSeek.progress = timelineView.changeZoom(1.25f)
+        }
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(44)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -583,6 +588,7 @@ class MainActivity : Activity() {
                     frameDurations[index] = duration
                     updateFrameStatus()
                     updateTimeline()
+                    recordHistory()
                     scheduleAutosave()
                 }
             }
@@ -592,6 +598,7 @@ class MainActivity : Activity() {
                     frameDurations[index + 1] = secondDuration
                     updateFrameStatus()
                     updateTimeline()
+                    recordHistory()
                     scheduleAutosave()
                 }
             }
@@ -619,7 +626,7 @@ class MainActivity : Activity() {
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
         val replaceAudioButton = Button(this).apply {
-            text = if (audioUri == null) "+" else "↻"
+            text = ""
             contentDescription = if (audioUri == null) "Agregar audio" else "Reemplazar audio"
             textSize = 16f
             setTextColor(Color.WHITE)
@@ -635,6 +642,7 @@ class MainActivity : Activity() {
             setOnClickListener { chooseAudio() }
         }
         audioActionButton = replaceAudioButton
+        setButtonIcon(replaceAudioButton, "ic_replace_audio", 22, transparent = true)
         timelineContent.addView(replaceAudioButton, FrameLayout.LayoutParams(dp(28), dp(26),
             Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(4)
@@ -830,7 +838,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), 0, dp(4), 0)
             setOnClickListener { action() }
         }
-        parent.addView(button, LinearLayout.LayoutParams(-2, dp(32)).apply {
+        parent.addView(button, LinearLayout.LayoutParams(-2, dp(40)).apply {
             setMargins(dp(2), 0, dp(2), 0)
         })
     }
@@ -923,6 +931,60 @@ class MainActivity : Activity() {
         if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
+    private fun historySnapshot(): String = buildSessionJson().toString()
+
+    private fun resetHistory() {
+        undoHistory.clear()
+        redoHistory.clear()
+        lastHistoryState = historySnapshot()
+    }
+
+    private fun recordHistory() {
+        if (restoringHistory || !::drawing.isInitialized) return
+        val state = historySnapshot()
+        val previous = lastHistoryState
+        if (previous == null) {
+            lastHistoryState = state
+            return
+        }
+        if (state == previous) return
+        undoHistory.addLast(previous)
+        while (undoHistory.size > maxHistorySteps) undoHistory.removeFirst()
+        redoHistory.clear()
+        lastHistoryState = state
+    }
+
+    private fun restoreHistoryState(state: String) {
+        restoringHistory = true
+        try {
+            applySessionJson(JSONObject(state))
+            updateFrameStatus()
+            updateTimeline()
+            timelineView.setSelectedFrame(currentFrame)
+            drawing.setFrame(currentFrame)
+            lastHistoryState = historySnapshot()
+            scheduleAutosave()
+        } finally {
+            restoringHistory = false
+        }
+    }
+
+    private fun undoGlobal() {
+        if (undoHistory.isEmpty()) return
+        val current = historySnapshot()
+        redoHistory.addLast(current)
+        while (redoHistory.size > maxHistorySteps) redoHistory.removeFirst()
+        restoreHistoryState(undoHistory.removeLast())
+    }
+
+    private fun redoGlobal() {
+        if (redoHistory.isEmpty()) return
+        val current = historySnapshot()
+        undoHistory.addLast(current)
+        while (undoHistory.size > maxHistorySteps) undoHistory.removeFirst()
+        restoreHistoryState(redoHistory.removeLast())
+    }
+
     private fun updateTimeline() {
         if (!::timelineView.isInitialized) return
         timelineView.setData(
@@ -940,6 +1002,7 @@ class MainActivity : Activity() {
         drawing.setFrame(currentFrame)
         updateFrameStatus()
         updateTimeline()
+        recordHistory()
         scheduleAutosave()
     }
 
@@ -951,6 +1014,7 @@ class MainActivity : Activity() {
         drawing.setFrame(currentFrame)
         updateFrameStatus()
         updateTimeline()
+        recordHistory()
         scheduleAutosave()
     }
 
@@ -967,6 +1031,7 @@ class MainActivity : Activity() {
         drawing.setFrame(currentFrame)
         updateFrameStatus()
         updateTimeline()
+        recordHistory()
         scheduleAutosave()
     }
 
@@ -977,15 +1042,22 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Eliminar plano")
-            .setMessage("¿Eliminar el plano ${currentFrame + 1}? Esta acción no se puede deshacer.")
+            .setMessage("¿Eliminar el plano ${currentFrame + 1}? El plano anterior ocupará su duración.")
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Eliminar") { _, _ ->
-                frameDurations.removeAt(currentFrame)
+                val removedDuration = frameDurations.removeAt(currentFrame)
+                if (currentFrame > 0) {
+                    frameDurations[currentFrame - 1] += removedDuration
+                } else if (frameDurations.isNotEmpty()) {
+                    // If the first shot is removed, the new first shot absorbs its duration.
+                    frameDurations[0] += removedDuration
+                }
                 drawing.removeFrame(currentFrame)
                 currentFrame = currentFrame.coerceAtMost(frameDurations.lastIndex)
                 drawing.setFrame(currentFrame)
                 updateFrameStatus()
                 updateTimeline()
+                recordHistory()
                 scheduleAutosave()
             }.show()
     }
@@ -1008,6 +1080,7 @@ class MainActivity : Activity() {
         drawing.setFrame(currentFrame)
         updateFrameStatus()
         updateTimeline()
+        recordHistory()
         scheduleAutosave()
     }
 
@@ -1016,6 +1089,7 @@ class MainActivity : Activity() {
         frameDurations[currentFrame] = (frameDurations[currentFrame] + delta).coerceAtLeast(minDuration)
         updateFrameStatus()
         updateTimeline()
+        recordHistory()
         scheduleAutosave()
     }
 
@@ -1036,6 +1110,7 @@ class MainActivity : Activity() {
                     frameDurations[currentFrame] = (seconds * 1000).toInt().coerceAtLeast(100)
                     updateFrameStatus()
                     updateTimeline()
+                    recordHistory()
                     scheduleAutosave()
                 }
             }.show()
@@ -1168,6 +1243,7 @@ class MainActivity : Activity() {
         updateTimeline()
         saveSession(showMessage = false)
         saveLocalSnapshot()
+        resetHistory()
         setStatus("SRT importado · ${blocks.size} planos creados")
         Toast.makeText(this, "Sesión creada: $projectName · ${blocks.size} planos", Toast.LENGTH_LONG).show()
     }
@@ -1251,6 +1327,7 @@ class MainActivity : Activity() {
                     saveSession(showMessage = false)
                     saveLocalSnapshot()
                     applySessionJson(JSONObject(json))
+                    resetHistory()
                     Toast.makeText(this, "Sesión cargada", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo abrir la sesión: ${e.message}")
@@ -1344,10 +1421,7 @@ class MainActivity : Activity() {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             audioUri = uri
-            audioActionButton?.apply {
-                text = "↻"
-                contentDescription = "Reemplazar audio"
-            }
+            audioActionButton?.contentDescription = "Reemplazar audio"
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(this@MainActivity, uri)
@@ -1455,6 +1529,7 @@ class MainActivity : Activity() {
                 val nextName = input.text.toString().trim()
                 if (nextName.isNotBlank()) {
                     projectName = nextName
+                    recordHistory()
                     updateFrameStatus()
                     updateTimeline()
                     scheduleAutosave()
@@ -1616,6 +1691,7 @@ class MainActivity : Activity() {
                     saveSession(showMessage = false)
                     saveLocalSnapshot()
                     applySessionJson(JSONObject(files[which].readText()))
+                    resetHistory()
                     Toast.makeText(this, "Sesión abierta", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo abrir la sesión: ${e.message}")
@@ -1953,10 +2029,11 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
-    fun changeZoom(factor: Float) {
-        pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(22f, 420f)
+    fun changeZoom(factor: Float): Int {
+        pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(8f, 420f)
         requestLayout()
         invalidate()
+        return (((pixelsPerSecond - 8f) / (420f - 8f)) * 100f).toInt().coerceIn(0, 100)
     }
 
     fun zoomToFitAll(): Int {
@@ -2342,7 +2419,7 @@ private class HueSatValPickerView(
         val availableTop = hueBar.bottom + 12f * density
         val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
         val squareWidth = (width - 36f * density).coerceAtLeast(1f)
-        val squareHeight = min(squareWidth * 0.74f, availableHeight).coerceAtLeast(1f)
+        val squareHeight = min(squareWidth * 2.22f, availableHeight).coerceAtLeast(1f)
         val left = (width - squareWidth) / 2f
         square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
         paint.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
