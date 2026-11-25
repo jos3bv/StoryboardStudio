@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.43 - scoped history, memory limits and interface refinements.
+// BV'Storyboarder 0.9.49 - unified wet-stroke preview/commit, white canvas and timeline button inset.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -688,9 +688,8 @@ class MainActivity : Activity() {
         }
         val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
         toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(40)))
-        // All three zones share the same exact 40dp parent height. Every icon button and
-        // the zoom SeekBar is laid out at 40dp and centered by the parent FrameLayout;
-        // no top padding, font metrics or native minimum-height can shift the play icon.
+        // All three zones share the same exact 40dp parent height. The 2dp top inset
+        // is internal to each button; it does not increase the toolbar row height.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
             group.minimumHeight = 0
@@ -698,7 +697,9 @@ class MainActivity : Activity() {
                 val child = group.getChildAt(i)
                 child.translationY = 0f
                 if (child is Button) {
-                    child.setPadding(0, 0, 0, 0)
+                    // A small internal top inset applies consistently to every
+                    // timeline toolbar button without changing the 40dp row height.
+                    child.setPadding(0, dp(2), 0, 0)
                     child.minHeight = dp(40)
                     child.minimumHeight = dp(40)
                     child.gravity = Gravity.CENTER
@@ -2961,7 +2962,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressPaint.color = if (stroke.erase) Color.WHITE else inProgressColor
         inProgressLastPoint = PointF(point.x, point.y)
         inProgressLastMidpoint = null
-        inProgressLastWidth = (width * 2f).coerceAtLeast(1f)
+        // Widths are already expressed in 1920x1080 drawing coordinates. Do not
+        // multiply them again: preview and committed pixels must have identical size.
+        inProgressLastWidth = width.coerceAtLeast(0.5f)
         inProgressBounds = RectF(point.x, point.y, point.x, point.y)
         inProgressDotPaint.color = inProgressPaint.color
         inProgressCanvas?.drawCircle(point.x, point.y, inProgressLastWidth * 0.5f, inProgressDotPaint)
@@ -2980,9 +2983,9 @@ class DrawingView(context: android.content.Context) : View(context) {
             return
         }
         val distance = kotlin.math.hypot((point.x - previous.x).toDouble(), (point.y - previous.y).toDouble()).toFloat()
-        if (distance < 0.35f) return
+        if (distance < 0.65f) return
         val midpoint = PointF((previous.x + point.x) * 0.5f, (previous.y + point.y) * 0.5f)
-        val nextWidth = (width * 2f).coerceAtLeast(1f)
+        val nextWidth = width.coerceAtLeast(0.5f)
         inProgressPaint.strokeWidth = ((inProgressLastWidth + nextWidth) * 0.5f).coerceAtLeast(1f)
         inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
         inProgressPath.reset()
@@ -3019,6 +3022,31 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressBounds = null
         inProgressLastPoint = null
         inProgressLastMidpoint = null
+    }
+
+    /**
+     * Commits the exact bitmap used for the live preview. This avoids rebuilding a
+     * second, geometrically different stroke from thousands of stored points when
+     * the pen is lifted. It also makes eraser preview and final erasure identical.
+     */
+    private fun commitInProgressBitmap(target: Bitmap) {
+        val source = inProgressBitmap ?: return
+        val bounds = inProgressBounds ?: return
+        val left = kotlin.math.floor(bounds.left).toInt().coerceIn(0, target.width)
+        val top = kotlin.math.floor(bounds.top).toInt().coerceIn(0, target.height)
+        val right = kotlin.math.ceil(bounds.right).toInt().coerceIn(0, target.width)
+        val bottom = kotlin.math.ceil(bounds.bottom).toInt().coerceIn(0, target.height)
+        if (right <= left || bottom <= top) return
+
+        val region = Rect(left, top, right, bottom)
+        val commitPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        if (inProgressErase) {
+            commitPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+        } else {
+            commitPaint.alpha = inProgressAlpha
+        }
+        Canvas(target).drawBitmap(source, region, region, commitPaint)
+        commitPaint.xfermode = null
     }
 
     private fun cachedInkBitmap(index: Int = frame): Bitmap {
@@ -3327,6 +3355,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
+        // The editable bitmap remains RGBA/transparent, but the visible storyboard
+        // paper is white. Erased pixels therefore reveal white instead of the dark UI.
+        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
         val unifiedBitmap = bitmapFor(frame)
         val inkBitmap = unifiedBitmap
@@ -3925,7 +3956,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                         if (point.x in 0f..1920f && point.y in 0f..1080f) {
                             val prior = stroke.points.lastOrNull()
                             val distance = if (prior == null) 999f else kotlin.math.hypot((point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()).toFloat()
-                            if (distance >= 0.35f) {
+                            if (distance >= 0.65f) {
                                 val pressureFactor = if (pressureSensitivity) {
                                     val curved = pressure * pressure
                                     0.18f + curved * 1.12f
@@ -3953,8 +3984,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val completed = current
                 if (completed != null) {
                     finishInProgressPreview()
-                    // Commit every completed stroke directly into the frame's sole RGBA bitmap.
-                    rasterizeStroke(bitmapFor(frame), completed)
+                    // Commit the exact live preview to the frame's sole RGBA bitmap.
+                    // Re-rasterizing the point list here caused a visible shape/width jump
+                    // and a long pause on dense stylus strokes.
+                    commitInProgressBitmap(bitmapFor(frame))
                     clearInProgressDirtyRegion()
                     frames.remove(frame)
                     invalidateFrameCache()

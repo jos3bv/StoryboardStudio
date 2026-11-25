@@ -1,9 +1,7 @@
-# BV'Storyboarder 0.9.47
+BV'Storyboarder 0.9.49 — código fuente
 
-Código fuente completo de BV'Storyboarder.
+Cambios principales: optimización del trazo en curso al confirmar directamente el bitmap de previsualización, corrección del grosor duplicado, goma con la misma máscara alfa de previsualización, fondo blanco visible del lienzo y padding superior interno de 2 dp en los botones de la timeline.
 
-Esta versión separa el renderizado del documento en capas independientes para que el borrador opere únicamente sobre la tinta rasterizada, sin borrar imágenes importadas ni textos. También reconstruye la barra de herramientas de la línea de tiempo en tres zonas con una altura común y centrado vertical compartido.
+Versión Android: versionCode 60 / versionName 0.9.49.
 
-Versión Android: 0.9.47 (versionCode 58).
-
-La compilación Android debe ejecutarse mediante el workflow de GitHub Actions o Android Studio. No se incluye un APK precompilado.
+Para compilar, abre este proyecto en Android Studio y ejecuta la tarea assembleDebug. Esta entrega no ha sido compilada en el entorno de generación.
