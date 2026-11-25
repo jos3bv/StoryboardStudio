@@ -619,6 +619,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, dp(10), 0)
+            clipChildren = false
         }
         val shotGroup = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -651,9 +652,8 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
         addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
-        toolbar.addView(shotGroup, LinearLayout.LayoutParams(-2, dp(40)).apply {
-            gravity = Gravity.CENTER_VERTICAL
-        })
+        val shotHolder = FrameLayout(this).apply { addView(shotGroup, FrameLayout.LayoutParams(-2, dp(48), Gravity.CENTER)) }
+        toolbar.addView(shotHolder, LinearLayout.LayoutParams(-2, dp(48)))
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(playback, "ic_first_frame", "Ir al inicio") { seekToTimelinePosition(0) }
@@ -665,9 +665,8 @@ class MainActivity : Activity() {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
-        toolbar.addView(playback, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
-            gravity = Gravity.CENTER_VERTICAL
-        })
+        val playbackHolder = FrameLayout(this).apply { addView(playback, FrameLayout.LayoutParams(-1, dp(48), Gravity.CENTER)) }
+        toolbar.addView(playbackHolder, LinearLayout.LayoutParams(0, dp(48), 1f))
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
@@ -688,25 +687,30 @@ class MainActivity : Activity() {
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") {
             timelineZoomSeek.progress = timelineView.changeZoom(1.25f)
         }
-        toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
-            gravity = Gravity.CENTER_VERTICAL
-        })
-        // Center every toolbar control on the same vertical axis as the zoom slider.
-        // Do not offset icons with top padding: it shifts the play button visually.
+        val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(48), Gravity.CENTER)) }
+        toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(48)))
+        // All three zones share the same 48dp parent height. Every icon button and
+        // the zoom SeekBar is laid out at 40dp and centered by the parent FrameLayout;
+        // no top padding, font metrics or native minimum-height can shift the play icon.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
+            group.minimumHeight = 0
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
+                child.translationY = 0f
                 if (child is Button) {
                     child.setPadding(0, 0, 0, 0)
+                    child.minHeight = dp(40)
+                    child.minimumHeight = dp(40)
                     child.gravity = Gravity.CENTER
-                    child.translationY = 0f
-                } else {
-                    child.translationY = 0f
+                    child.includeFontPadding = false
+                } else if (child is SeekBar) {
+                    child.minimumHeight = dp(40)
+                    child.setPadding(dp(2), 0, dp(2), 0)
                 }
             }
         }
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(48)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -2792,7 +2796,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val decodedImageCache = object : LinkedHashMap<String, DecodedImageEntry>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 1
     }
-    private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
+    // Transparent ink-only cache: erasing never touches imported artwork or note overlays.
+    private val renderedInkCache = linkedMapOf<Int, Bitmap>()
     // Reusable wet-ink surface. Samples are rasterized once as they arrive; onDraw
     // only composites this bitmap instead of rebuilding the entire stroke every frame.
     private var inProgressBitmap: Bitmap? = null
@@ -2805,6 +2810,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         isDither = true
     }
     private val inProgressDisplayPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val inProgressDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val clearDirtyPaint = Paint().apply {
+        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+    }
     private val inProgressErasePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         // The in-progress bitmap is an alpha mask. DST_OUT erases only where the
         // mask contains painted pixels; CLEAR would erase its entire rectangular bounds.
@@ -2872,15 +2881,12 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun invalidateFrameCache(index: Int = frame) {
-        val removed = renderedFrameCache.remove(index)
-        if (removed != null) {
-            if (!removed.isRecycled) removed.recycle()
-        }
+        renderedInkCache.remove(index)?.let { if (!it.isRecycled) it.recycle() }
     }
 
     private fun invalidateAllFrameCaches() {
-        renderedFrameCache.values.forEach { if (!it.isRecycled) it.recycle() }
-        renderedFrameCache.clear()
+        renderedInkCache.values.forEach { if (!it.isRecycled) it.recycle() }
+        renderedInkCache.clear()
     }
 
     fun releaseCachedBitmaps() {
@@ -2912,7 +2918,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressLastMidpoint = null
         inProgressLastWidth = (width * 2f).coerceAtLeast(1f)
         inProgressBounds = RectF(point.x, point.y, point.x, point.y)
-        inProgressCanvas?.drawCircle(point.x, point.y, inProgressLastWidth * 0.5f, Paint(inProgressPaint).apply { style = Paint.Style.FILL })
+        inProgressDotPaint.color = inProgressPaint.color
+        inProgressCanvas?.drawCircle(point.x, point.y, inProgressLastWidth * 0.5f, inProgressDotPaint)
         expandInProgressBounds(point, inProgressLastWidth)
     }
 
@@ -2962,57 +2969,52 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun clearInProgressDirtyRegion() {
         val bounds = inProgressBounds
         if (bounds != null) {
-            inProgressCanvas?.drawRect(bounds, Paint().apply {
-                xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
-            })
+            inProgressCanvas?.drawRect(bounds, clearDirtyPaint)
         }
         inProgressBounds = null
         inProgressLastPoint = null
         inProgressLastMidpoint = null
     }
 
-    private fun compositeInProgressIntoFrameCache() {
-        val bitmap = inProgressBitmap ?: return
-        val bounds = inProgressBounds ?: return
-        val base = cachedFrameBitmap()
-        val target = Canvas(base)
-        val paint = if (inProgressErase) inProgressErasePaint else Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = inProgressAlpha }
-        target.save()
-        target.clipRect(bounds)
-        target.drawBitmap(bitmap, 0f, 0f, paint)
-        target.restore()
-        // Clear only the dirty rectangle so the reusable surface is ready for the
-        // next rapid stroke without allocating or clearing an entire 8 MB bitmap.
-        clearInProgressDirtyRegion()
-    }
-
-    private fun cachedFrameBitmap(): Bitmap {
-        renderedFrameCache[frame]?.let { if (!it.isRecycled) return it }
+    private fun cachedInkBitmap(index: Int = frame): Bitmap {
+        renderedInkCache[index]?.let { if (!it.isRecycled) return it }
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
-        val cacheCanvas = Canvas(bitmap)
-        cacheCanvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        importedImages[frame]?.let { image ->
-            val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f,
-                (1920+image.width)/2f, (1080+image.height)/2f)
-            cacheCanvas.drawBitmap(image, null, dst, imagePaint)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+        frames[index].orEmpty().forEach { stroke ->
+            if (index != frame || (stroke !== current && stroke !in selectedStrokes)) {
+                // CLEAR is safe here because this bitmap contains ink only.
+                drawStroke(canvas, stroke)
+            }
         }
-        frames[frame].orEmpty().forEach { stroke ->
-            if (stroke !== current && stroke !in selectedStrokes) drawStroke(cacheCanvas, stroke)
-        }
-        var noteY = 1030f
-        notes[frame]?.firstOrNull()?.let { note ->
-            textPaint.textSize = 34f
-            textPaint.color = Color.RED
-            cacheCanvas.drawText(note, 24f, noteY, textPaint)
-            textPaint.color = Color.DKGRAY
-        }
-        renderedFrameCache[frame] = bitmap
-        while (renderedFrameCache.size > 2) {
-            val oldestKey = renderedFrameCache.keys.first()
-            invalidateFrameCache(oldestKey)
+        renderedInkCache[index] = bitmap
+        while (renderedInkCache.size > 2) {
+            val oldest = renderedInkCache.keys.first()
+            renderedInkCache.remove(oldest)?.let { if (!it.isRecycled) it.recycle() }
         }
         return bitmap
+    }
+
+    private fun drawImportedImage(canvas: Canvas, index: Int) {
+        importedImages[index]?.let { image ->
+            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f,
+                (1920+image.width)/2f, (1080+image.height)/2f)
+            canvas.drawBitmap(image, null, dst, imagePaint)
+        }
+    }
+
+    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    private fun drawNote(canvas: Canvas, index: Int) {
+        notes[index]?.firstOrNull()?.let { note ->
+            val oldColor = textPaint.color
+            val oldSize = textPaint.textSize
+            textPaint.textSize = 34f
+            textPaint.color = noteColors[index] ?: Color.RED
+            canvas.drawText(note, 24f, 1030f, textPaint)
+            textPaint.color = oldColor
+            textPaint.textSize = oldSize
+        }
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
@@ -3270,42 +3272,34 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
-        // The white sheet stays underneath the transparent ink layer. CLEAR erasing
-        // therefore removes only drawing pixels and reveals pure white paper.
+        // Render order is explicit: paper -> imported image -> ink -> note overlay.
+        // The eraser masks only the transparent ink layer, never the image or text.
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
-        val layer = canvas.saveLayer(boardBounds, null)
-        canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-        // Wet ink is incrementally rasterized as input arrives. Compositing a bitmap
-        // here avoids rebuilding paths, distance tables and thousands of samples on
-        // every frame while the user is drawing.
-        if (current != null) {
-            val wetBitmap = inProgressBitmap
-            val wetBounds = inProgressBounds
-            if (wetBitmap != null && wetBounds != null) {
+        drawImportedImage(canvas, frame)
+        val inkBitmap = cachedInkBitmap(frame)
+        val wetBitmap = inProgressBitmap
+        val wetBounds = inProgressBounds
+        if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
+            val inkLayer = canvas.saveLayer(boardBounds, null)
+            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            canvas.save()
+            canvas.clipRect(wetBounds)
+            canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+            canvas.restore()
+            canvas.restoreToCount(inkLayer)
+        } else {
+            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            if (current != null && wetBitmap != null && wetBounds != null) {
                 canvas.save()
                 canvas.clipRect(wetBounds)
-                if (inProgressErase) {
-                    canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
-                    // Notes are a separate overlay in the document model. Redraw them
-                    // after the eraser mask so the temporary white paper reveal cannot
-                    // make the note text appear erased during the gesture.
-                    notes[frame]?.firstOrNull()?.let { note ->
-                        val previousColor = textPaint.color
-                        val previousSize = textPaint.textSize
-                        textPaint.textSize = 34f
-                        textPaint.color = Color.RED
-                        canvas.drawText(note, 24f, 1030f, textPaint)
-                        textPaint.color = previousColor
-                        textPaint.textSize = previousSize
-                    }
-                } else {
-                    inProgressDisplayPaint.alpha = inProgressAlpha
-                    canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
-                    inProgressDisplayPaint.alpha = 255
-                }
+                inProgressDisplayPaint.alpha = inProgressAlpha
+                canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
+                inProgressDisplayPaint.alpha = 255
                 canvas.restore()
             }
         }
+        drawNote(canvas, frame)
+        val layer = canvas.saveLayer(boardBounds, null)
         if (selectedStrokes.isNotEmpty()) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
@@ -3877,15 +3871,11 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val completed = current
                 if (completed != null) {
                     finishInProgressPreview()
-                    if (completed.erase) {
-                        // Rebuild from the ordered stroke model. The cached bitmap also
-                        // contains note overlays; applying DST_OUT directly to that cache
-                        // would erase the note and leave a white trace until a later redraw.
-                        clearInProgressDirtyRegion()
-                        invalidateFrameCache()
-                    } else {
-                        compositeInProgressIntoFrameCache()
-                    }
+                    // The committed stroke is now part of the ink-only layer. Rebuild
+                    // that cache once after pen-up; never bake wet ink into the composite
+                    // frame bitmap (which also contains images and note overlays).
+                    clearInProgressDirtyRegion()
+                    invalidateFrameCache()
                 }
                 current = null
                 invalidate()
