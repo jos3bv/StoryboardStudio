@@ -137,7 +137,6 @@ class MainActivity : Activity() {
 
     private fun initializeSessionStorage() {
         prepareStorageFolders()
-        migratePreviousStorage()
         loadSession()
         resetHistory()
         handler.removeCallbacks(autosaveRunnable)
@@ -150,8 +149,8 @@ class MainActivity : Activity() {
             if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 initializeSessionStorage()
             } else {
-                setStatus("Se necesita permiso de almacenamiento para usar Documentos/Storyboarder")
-                Toast.makeText(this, "Autoriza el almacenamiento para guardar sesiones en Documentos/Storyboarder", Toast.LENGTH_LONG).show()
+                setStatus("Se necesita permiso de almacenamiento para usar Documentos/BVstoryboarder")
+                Toast.makeText(this, "Autoriza el almacenamiento para guardar sesiones en Documentos/BVstoryboarder", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -618,7 +617,7 @@ class MainActivity : Activity() {
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(2), dp(10), dp(2))
+            setPadding(dp(10), 0, dp(10), 0)
             clipChildren = false
         }
         val shotGroup = LinearLayout(this).apply {
@@ -689,7 +688,7 @@ class MainActivity : Activity() {
         }
         val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
         toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(40)))
-        // All three zones share the same 40dp parent height. Every icon button and
+        // All three zones share the same exact 40dp parent height. Every icon button and
         // the zoom SeekBar is laid out at 40dp and centered by the parent FrameLayout;
         // no top padding, font metrics or native minimum-height can shift the play icon.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
@@ -1864,7 +1863,7 @@ class MainActivity : Activity() {
             val file = File(sessionsDirectory, "${base}_$stamp.sbd")
             file.writeText(buildSessionJson().toString(2))
             setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
-            Toast.makeText(this, "Sesión guardada en Documentos/Storyboarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Sesión guardada en Documentos/BVstoryboarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("No se pudo guardar la copia: ${e.message}")
         }
@@ -1877,7 +1876,7 @@ class MainActivity : Activity() {
         if (files.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("Sesiones guardadas")
-                .setMessage("Todavía no hay sesiones guardadas en Documentos/Storyboarder/Sessions.")
+                .setMessage("Todavía no hay sesiones guardadas en Documentos/BVstoryboarder/Sessions.")
                 .setPositiveButton("Aceptar", null)
                 .show()
             return
@@ -1910,7 +1909,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Guardar sesión")
-            .setMessage("La sesión se guardará en Documentos/Storyboarder/sessions.")
+            .setMessage("La sesión se guardará en Documentos/BVstoryboarder/sessions.")
             .setView(nameInput)
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Guardar") { _, _ ->
@@ -1972,9 +1971,26 @@ class MainActivity : Activity() {
     }
 
     private fun migratePreviousStorage() {
-        // 0.9.48 starts with a clean project format. Legacy sessions are intentionally
-        // not imported: the previous vector/layer model is not compatible with the
-        // planned single-bitmap-per-frame document model.
+        try {
+            val oldRoot = File(filesDir, "storyboardstudio")
+            val oldAutosave = File(oldRoot, "session.json")
+            if (!sessionFile.exists() && oldAutosave.exists()) {
+                sessionFile.parentFile?.mkdirs()
+                oldAutosave.copyTo(sessionFile, overwrite = false)
+            }
+            val oldSessions = File(oldRoot, "sessions")
+            val previousDocumentsSessions = File(appStorageDirectory, "Sessions")
+            listOf(oldSessions, previousDocumentsSessions).filter { it.isDirectory }.forEach { sourceDirectory ->
+                sessionsDirectory.mkdirs()
+                sourceDirectory.listFiles()?.filter { it.isFile }?.forEach { old ->
+                    val target = File(sessionsDirectory, old.name)
+                    if (!target.exists()) old.copyTo(target, overwrite = false)
+                }
+            }
+        } catch (e: Exception) {
+            // Keep the app usable even if the legacy folder cannot be migrated.
+            android.util.Log.w("StoryboardStudio", "Storage migration skipped", e)
+        }
     }
 
     private fun loadSession() {
@@ -2044,7 +2060,7 @@ class MainActivity : Activity() {
                 "application/pdf",
                 "PDF"
             ) { output -> pdf.writeTo(output) }
-            setStatus("PDF guardado en Documentos/Storyboarder/Exports/PDF")
+            setStatus("PDF guardado en Documentos/BVstoryboarder/Exports/PDF")
             Toast.makeText(this, "PDF exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PDF: ${e.message}")
@@ -2058,7 +2074,7 @@ class MainActivity : Activity() {
         try {
             val name = "${safeProjectFileName()}_plano_${(currentFrame + 1).toString().padStart(3, '0')}.png"
             writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportCurrent(output) }
-            setStatus("PNG guardado en Documentos/Storyboarder/Exports/PNG")
+            setStatus("PNG guardado en Documentos/BVstoryboarder/Exports/PNG")
             Toast.makeText(this, "Plano ${currentFrame + 1} exportado a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PNG: ${e.message}")
@@ -2072,7 +2088,7 @@ class MainActivity : Activity() {
                 val name = "${safeProjectFileName()}_plano_${(i + 1).toString().padStart(3, '0')}.png"
                 writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportFrame(i, output) }
             }
-            setStatus("${frameDurations.size} PNG guardados en Documentos/Storyboarder/Exports/PNG")
+            setStatus("${frameDurations.size} PNG guardados en Documentos/BVstoryboarder/Exports/PNG")
             Toast.makeText(this, "${frameDurations.size} planos exportados a Documentos", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("Error al exportar PNG: ${e.message}")
@@ -2754,13 +2770,56 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val clearRedoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
 
     init {
-        setBackgroundColor(Color.WHITE)
+        setBackgroundColor(Color.TRANSPARENT)
     }
 
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
+    // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
+    // Authoritative artwork: exactly one transparent RGBA bitmap per storyboard frame.
+    // Legacy Stroke/importedImage structures are accepted only while decoding old projects.
+    private val frameBitmaps = mutableMapOf<Int, Bitmap>()
+    private fun bitmapFor(index: Int = frame): Bitmap = frameBitmaps.getOrPut(index) {
+        Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+    }
+    private fun rasterizeStroke(target: Bitmap, stroke: Stroke) {
+        if (stroke.points.isEmpty()) return
+        val c = Canvas(target)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            color = stroke.color
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            xfermode = if (stroke.erase) PorterDuffXfermode(PorterDuff.Mode.CLEAR) else null
+        }
+        if (stroke.points.size == 1) {
+            paint.style = Paint.Style.FILL
+            c.drawCircle(stroke.points[0].x, stroke.points[0].y, stroke.widths.firstOrNull()?.div(2f) ?: 2f, paint)
+        } else {
+            for (i in 1 until stroke.points.size) {
+                paint.strokeWidth = ((stroke.widths.getOrElse(i-1) { 4f }) + (stroke.widths.getOrElse(i) { 4f })) / 2f
+                c.drawLine(stroke.points[i-1].x, stroke.points[i-1].y, stroke.points[i].x, stroke.points[i].y, paint)
+            }
+        }
+        paint.xfermode = null
+    }
+    private fun bakeLegacyFrame(index: Int) {
+        val hasLegacy = !frames[index].isNullOrEmpty() || importedImages[index] != null
+        if (!hasLegacy) return
+        val target = bitmapFor(index)
+        importedImages[index]?.let { image ->
+            val dst = RectF(0f, 0f, 1920f, 1080f)
+            val scale = min(1920f / image.width, 1080f / image.height)
+            val w = image.width * scale; val h = image.height * scale
+            val left = (1920f - w) / 2f; val top = (1080f - h) / 2f
+            Canvas(target).drawBitmap(image, null, RectF(left, top, left+w, top+h), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        }
+        frames[index].orEmpty().forEach { rasterizeStroke(target, it) }
+        frames.remove(index)
+        importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+    }
     private val redoFrames = mutableMapOf<Int, MutableList<Stroke>>()
     private val notes = mutableMapOf<Int, MutableList<String>>()
     private val noteColors = mutableMapOf<Int, Int>()
@@ -2825,6 +2884,9 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var lassoEnabled = false
     private val lassoPoints = mutableListOf<PointF>()
     private val selectedStrokes = mutableListOf<Stroke>()
+    private var selectedPixels: Bitmap? = null
+    private var selectionOriginalBitmap: Bitmap? = null
+    private var selectionPixelBounds = RectF()
     private var selectionCenterX = 0f
     private var selectionCenterY = 0f
     private var selectionTranslateX = 0f
@@ -3004,6 +3066,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun setFrame(index: Int) { cancelSelection(); frame = index; invalidate() }
     fun clearProject() {
         frames.clear()
+        frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
+        frameBitmaps.clear()
         redoFrames.clear()
         clearUndoSnapshots.clear()
         clearRedoSnapshots.clear()
@@ -3042,9 +3106,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
         val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
         val fitted=Bitmap.createScaledBitmap(bitmap,w,h,true)
-        importedImages.put(frame,fitted)?.let { previous ->
-            if (previous !== fitted && !previous.isRecycled) previous.recycle()
-        }
+        val left=(maxW-w)/2f; val top=(maxH-h)/2f
+        Canvas(bitmapFor()).drawBitmap(fitted, null, RectF(left, top, left+w, top+h), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        if (fitted !== bitmap && !fitted.isRecycled) fitted.recycle()
         invalidateFrameCache(); invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
@@ -3110,18 +3174,19 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun clear() {
-        val existingStrokes = frames[frame].orEmpty()
-        val existingImage = importedImages[frame]
-        if (existingStrokes.isEmpty() && existingImage == null) return
+        bakeLegacyFrame(frame)
+        val existingBitmap = frameBitmaps[frame]
+        if (existingBitmap == null || existingBitmap.isRecycled) return
 
-        val snapshot = ClearSnapshot(existingStrokes.toList(), existingImage)
+        val snapshot = ClearSnapshot(emptyList(), existingBitmap.copy(Bitmap.Config.ARGB_8888, true))
         val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
         clearUndo.add(snapshot)
         while (clearUndo.size > 10) clearUndo.removeAt(0)
         clearRedoSnapshots.remove(frame)
 
-        frames.remove(frame)
+        frameBitmaps.remove(frame)?.let { if (!it.isRecycled) it.eraseColor(Color.TRANSPARENT) }
         redoFrames.remove(frame)
+        frames.remove(frame)
         importedImages.remove(frame)
         // Keep notes and noteColors: clearing the canvas must not erase its text.
         invalidateFrameCache()
@@ -3148,11 +3213,14 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun duplicateFrame(source: Int, target: Int) {
         invalidateAllFrameCaches()
+        bakeLegacyFrame(source)
+        val sourceBitmap = frameBitmaps[source]?.copy(Bitmap.Config.ARGB_8888, true)
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.take(1)?.toMutableList()
         val sourceNoteColor = noteColors[source]
         shiftFramesForInsert(target)
         if (sourceStrokes != null) frames[target] = sourceStrokes
+        sourceBitmap?.let { frameBitmaps[target] = it }
         if (sourceNotes != null) notes[target] = sourceNotes
         sourceNoteColor?.let { noteColors[target] = it }
         importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
@@ -3172,6 +3240,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.forEach { (key, value) -> newFrames[if (key >= at) key + 1 else key] = value }
         frames.clear()
         frames.putAll(newFrames)
+        val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>=at) k+1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> shiftedImages[if(k>=at) k+1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
@@ -3189,6 +3258,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.forEach { (key, value) -> if (key != index) newFrames[if (key > index) key - 1 else key] = value }
         frames.clear()
         frames.putAll(newFrames)
+        frameBitmaps.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+        val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>index) k-1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> if(k!=index) shiftedImages[if(k>index) k-1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
@@ -3218,6 +3289,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             notes[old]?.let { newNotes[new] = it }
         }
         frames.clear(); frames.putAll(newFrames)
+        val movedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (old,bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedBitmaps[new]=bmp }; frameBitmaps.clear(); frameBitmaps.putAll(movedBitmaps)
         val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
         val movedNoteColors = mutableMapOf<Int, Int>()
@@ -3255,11 +3327,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
-        // Render order is explicit: paper -> imported image -> ink -> note overlay.
-        // The eraser masks only the transparent ink layer, never the image or text.
-        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
-        drawImportedImage(canvas, frame)
-        val inkBitmap = cachedInkBitmap(frame)
+        // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
+        val unifiedBitmap = bitmapFor(frame)
+        val inkBitmap = unifiedBitmap
         val wetBitmap = inProgressBitmap
         val wetBounds = inProgressBounds
         if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
@@ -3283,7 +3353,19 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         drawNote(canvas, frame)
         val layer = canvas.saveLayer(boardBounds, null)
-        if (selectedStrokes.isNotEmpty()) {
+        if (selectedPixels != null) {
+            canvas.save()
+            canvas.translate(selectionTranslateX, selectionTranslateY)
+            canvas.rotate(selectionRotation, selectionCenterX, selectionCenterY)
+            canvas.scale(selectionScale, selectionScale, selectionCenterX, selectionCenterY)
+            canvas.drawBitmap(selectedPixels!!, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(35, 155, 235); style = Paint.Style.STROKE; strokeWidth = 3f
+                pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 8f), 0f)
+            }
+            canvas.drawRect(selectionPixelBounds, selectionPaint)
+            canvas.restore()
+        } else if (hasSelection()) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
             canvas.rotate(selectionRotation, selectionCenterX, selectionCenterY)
@@ -3319,6 +3401,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         lassoEnabled = true
         lassoPoints.clear()
         selectedStrokes.clear()
+        selectedPixels?.recycle(); selectedPixels = null
+        selectionOriginalBitmap?.recycle(); selectionOriginalBitmap = null
         selectionOriginals.clear()
         selectionFrameBackup = null
         selectionParts.clear()
@@ -3330,9 +3414,26 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
-    fun hasSelection(): Boolean = selectedStrokes.isNotEmpty()
+    fun hasSelection(): Boolean = selectedPixels != null || selectedStrokes.isNotEmpty()
 
     fun confirmSelection() {
+        val pixels = selectedPixels
+        if (pixels != null) {
+            val target = bitmapFor(frame)
+            val c = Canvas(target)
+            c.save()
+            c.translate(selectionTranslateX, selectionTranslateY)
+            c.rotate(selectionRotation, selectionCenterX, selectionCenterY)
+            c.scale(selectionScale, selectionScale, selectionCenterX, selectionCenterY)
+            c.drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            c.restore()
+            selectedPixels = null
+            pixels.recycle()
+            selectionOriginalBitmap?.recycle(); selectionOriginalBitmap = null
+            resetPixelSelectionTransform()
+            invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
+            return
+        }
         if (selectedStrokes.isEmpty()) {
             lassoEnabled = false
             lassoPoints.clear()
@@ -3375,6 +3476,13 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun cancelSelection() {
+        selectedPixels?.let { pixels ->
+            val original = bitmapFor(frame)
+            Canvas(original).drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.FILTER_BITMAP_FLAG))
+            pixels.recycle(); selectedPixels = null
+        }
+        selectionOriginalBitmap?.recycle(); selectionOriginalBitmap = null
+        resetPixelSelectionTransform()
         selectionFrameBackup?.let { backup -> frames[frame] = cloneStrokes(backup) }
         selectedStrokes.clear()
         selectionOriginals.clear()
@@ -3388,6 +3496,11 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionScale = 1f
         invalidateFrameCache()
         invalidate()
+    }
+
+    private fun resetPixelSelectionTransform() {
+        selectionTranslateX = 0f; selectionTranslateY = 0f; selectionRotation = 0f; selectionScale = 1f
+        selectionPixelBounds = RectF()
     }
 
     private fun selectionBounds(): RectF {
@@ -3413,67 +3526,54 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun finishLasso() {
         lassoEnabled = false
         if (lassoPoints.size < 3) { lassoPoints.clear(); invalidate(); return }
-        val originalFrame = frames[frame].orEmpty()
-        val backup = cloneStrokes(originalFrame)
-        val replacement = mutableListOf<Stroke>()
-        val parts = mutableListOf<Pair<Boolean, Stroke>>()
-        val selected = mutableListOf<Stroke>()
-
-        originalFrame.forEach { stroke ->
-            if (stroke.erase || stroke.points.isEmpty()) {
-                parts.add(false to stroke)
-                replacement.add(stroke)
-            } else {
-                var segmentStart = 0
-                var segmentInside = pointInPolygon(stroke.points[0], lassoPoints)
-                fun flushSegment(endExclusive: Int) {
-                    if (endExclusive <= segmentStart) return
-                    val segment = Stroke(
-                        stroke.points.subList(segmentStart, endExclusive).map { PointF(it.x, it.y) }.toMutableList(),
-                        stroke.widths.subList(segmentStart, min(endExclusive, stroke.widths.size)).toMutableList(),
-                        stroke.color,
-                        stroke.erase
-                    )
-                    if (segment.widths.size < segment.points.size) {
-                        while (segment.widths.size < segment.points.size) segment.widths.add(segment.widths.lastOrNull() ?: 4f)
-                    }
-                    parts.add(segmentInside to segment)
-                    if (segmentInside) selected.add(segment) else replacement.add(segment)
-                }
-                for (pointIndex in 1 until stroke.points.size) {
-                    val inside = pointInPolygon(stroke.points[pointIndex], lassoPoints)
-                    if (inside != segmentInside) {
-                        flushSegment(pointIndex)
-                        segmentStart = pointIndex
-                        segmentInside = inside
-                    }
-                }
-                flushSegment(stroke.points.size)
-            }
+        bakeLegacyFrame(frame)
+        val source = bitmapFor(frame)
+        val bounds = RectF(
+            (lassoPoints.minOf { it.x } - 2f).coerceAtLeast(0f),
+            (lassoPoints.minOf { it.y } - 2f).coerceAtLeast(0f),
+            (lassoPoints.maxOf { it.x } + 2f).coerceAtMost(1920f),
+            (lassoPoints.maxOf { it.y } + 2f).coerceAtMost(1080f)
+        )
+        val left = bounds.left.toInt(); val top = bounds.top.toInt()
+        val right = bounds.right.toInt(); val bottom = bounds.bottom.toInt()
+        if (right <= left || bottom <= top) { lassoPoints.clear(); invalidate(); return }
+        val selection = Bitmap.createBitmap(right-left, bottom-top, Bitmap.Config.ARGB_8888)
+        val maskPath = Path().apply {
+            moveTo(lassoPoints.first().x-left, lassoPoints.first().y-top)
+            lassoPoints.drop(1).forEach { lineTo(it.x-left, it.y-top) }
+            close()
         }
-
-        if (selected.isEmpty()) {
-            lassoPoints.clear()
-            invalidate()
-            return
+        val selectionCanvas = Canvas(selection)
+        selectionCanvas.save()
+        selectionCanvas.clipPath(maskPath)
+        selectionCanvas.drawBitmap(source, -left.toFloat(), -top.toFloat(), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        selectionCanvas.restore()
+        if (selection.width == 0 || selection.height == 0 || !selectionHasPixels(selection)) {
+            selection.recycle(); lassoPoints.clear(); invalidate(); return
         }
-        selectionFrameBackup = backup
-        selectionParts.clear()
-        selectionParts.addAll(parts)
-        frames[frame] = replacement
-        selectedStrokes.clear()
-        selectedStrokes.addAll(selected)
-        selectionOriginals = selected.map { st ->
-            Stroke(st.points.map { PointF(it.x, it.y) }.toMutableList(), st.widths.toMutableList(), st.color, st.erase)
-        }.toMutableList()
-        val bounds = selectionBounds()
-        selectionCenterX = bounds.centerX()
-        selectionCenterY = bounds.centerY()
-        selectionTranslateX = 0f; selectionTranslateY = 0f
-        selectionRotation = 0f; selectionScale = 1f
+        val eraseCanvas = Canvas(source)
+        val clearPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+        eraseCanvas.save()
+        eraseCanvas.clipPath(Path().apply {
+            moveTo(lassoPoints.first().x, lassoPoints.first().y)
+            lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }
+            close()
+        })
+        eraseCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        eraseCanvas.restore()
+        clearPaint.xfermode = null
+        selectedPixels = selection
+        selectionPixelBounds = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+        selectionCenterX = selectionPixelBounds.centerX(); selectionCenterY = selectionPixelBounds.centerY()
+        selectionTranslateX = 0f; selectionTranslateY = 0f; selectionRotation = 0f; selectionScale = 1f
         lassoPoints.clear()
-        invalidateFrameCache()
-        invalidate()
+        invalidateFrameCache(); invalidate()
+    }
+
+    private fun selectionHasPixels(bitmap: Bitmap): Boolean {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return pixels.any { Color.alpha(it) != 0 }
     }
 
     private fun viewToDrawingPoint(
@@ -3680,7 +3780,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val left = (width - boardW) / 2f
         val top = (height - boardH) / 2f
 
-        if (lassoEnabled || selectedStrokes.isNotEmpty()) {
+        if (lassoEnabled || hasSelection()) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -3695,7 +3795,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                     return true
                 }
                 MotionEvent.ACTION_POINTER_DOWN -> {
-                    if (selectedStrokes.isNotEmpty() && event.pointerCount >= 2) {
+                    if (hasSelection() && event.pointerCount >= 2) {
                         val p0 = viewToDrawingPoint(event.getX(0), event.getY(0), left, top, boardScale)
                         val p1 = viewToDrawingPoint(event.getX(1), event.getY(1), left, top, boardScale)
                         selectionLastX = (p0.x + p1.x) / 2f
@@ -3710,7 +3810,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                         val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                         val last = lassoPoints.lastOrNull()
                         if (last == null || kotlin.math.hypot((point.x-last.x).toDouble(), (point.y-last.y).toDouble()) >= 2.5) lassoPoints.add(point)
-                    } else if (selectedStrokes.isNotEmpty() && event.pointerCount >= 2) {
+                    } else if (hasSelection() && event.pointerCount >= 2) {
                         val p0 = viewToDrawingPoint(event.getX(0), event.getY(0), left, top, boardScale)
                         val p1 = viewToDrawingPoint(event.getX(1), event.getY(1), left, top, boardScale)
                         val cx = (p0.x+p1.x)/2f; val cy = (p0.y+p1.y)/2f
@@ -3723,7 +3823,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                         while (da < -180f) da += 360f
                         selectionRotation += da
                         selectionLastX = cx; selectionLastY = cy; selectionLastSpan = span; selectionLastAngle = angle
-                    } else if (selectedStrokes.isNotEmpty()) {
+                    } else if (hasSelection()) {
                         val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                         val previous = viewToDrawingPoint(selectionLastX, selectionLastY, left, top, boardScale)
                         selectionTranslateX += point.x-previous.x
@@ -3810,7 +3910,6 @@ class DrawingView(context: android.content.Context) : View(context) {
                 clearRedoSnapshots.remove(frame)
                 val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 current = stroke
-                strokes().add(stroke)
                 beginInProgressStroke(point, initialWidth, stroke)
                 invalidate()
                 return true
@@ -3854,10 +3953,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val completed = current
                 if (completed != null) {
                     finishInProgressPreview()
-                    // The committed stroke is now part of the ink-only layer. Rebuild
-                    // that cache once after pen-up; never bake wet ink into the composite
-                    // frame bitmap (which also contains images and note overlays).
+                    // Commit every completed stroke directly into the frame's sole RGBA bitmap.
+                    rasterizeStroke(bitmapFor(frame), completed)
                     clearInProgressDirtyRegion()
+                    frames.remove(frame)
                     invalidateFrameCache()
                 }
                 current = null
@@ -3880,36 +3979,18 @@ class DrawingView(context: android.content.Context) : View(context) {
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
-        val indices = (frames.keys + notes.keys + importedImages.keys).toSet().sorted()
+        val indices = (frameBitmaps.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
         indices.forEach { index ->
             val frameObject = JSONObject()
             frameObject.put("index", index)
-            val strokeArray = JSONArray()
-            frames[index].orEmpty().forEach { stroke ->
-                val strokeObject = JSONObject()
-                strokeObject.put("color", stroke.color)
-                strokeObject.put("erase", stroke.erase)
-                val points = JSONArray()
-                stroke.points.forEachIndexed { pointIndex, point ->
-                    val pointObject = JSONObject()
-                    pointObject.put("x", point.x.toDouble())
-                    pointObject.put("y", point.y.toDouble())
-                    pointObject.put("width", stroke.widths.getOrElse(pointIndex) { 4f }.toDouble())
-                    points.put(pointObject)
+            bakeLegacyFrame(index)
+            val bitmap = frameBitmaps[index]
+            if (bitmap != null && !bitmap.isRecycled) {
+                val bytes = java.io.ByteArrayOutputStream().use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    out.toByteArray()
                 }
-                strokeObject.put("points", points)
-                strokeArray.put(strokeObject)
-            }
-            frameObject.put("strokes", strokeArray)
-            importedImages[index]?.let { bitmap ->
-                val encoded = encodedImageCache.getOrPut(bitmap) {
-                    val bytes = java.io.ByteArrayOutputStream().use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                        out.toByteArray()
-                    }
-                    Base64.encodeToString(bytes, Base64.NO_WRAP)
-                }
-                frameObject.put("importedImage", encoded)
+                frameObject.put("bitmap", Base64.encodeToString(bytes, Base64.NO_WRAP))
             }
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
@@ -3924,6 +4005,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun loadJson(root: JSONObject) {
         invalidateAllFrameCaches()
         frames.clear()
+        frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
+        frameBitmaps.clear()
         redoFrames.clear()
         clearUndoSnapshots.clear()
         clearRedoSnapshots.clear()
@@ -3978,6 +4061,19 @@ class DrawingView(context: android.content.Context) : View(context) {
                 }
                 if (bitmap != null) importedImages[index] = bitmap
             } catch (_: Exception) { }
+            val bitmapData = frameObject.optString("bitmap", "")
+            if (bitmapData.isNotBlank()) try {
+                val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
+                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (decoded != null) {
+                    val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) decoded else Bitmap.createScaledBitmap(decoded, 1920, 1080, true)
+                    frameBitmaps[index] = normalized
+                    if (normalized !== decoded && !decoded.isRecycled) decoded.recycle()
+                    frames.remove(index)
+                    importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+                }
+            } catch (_: Exception) { }
+            if (!frameBitmaps.containsKey(index)) bakeLegacyFrame(index)
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
@@ -3988,8 +4084,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
-        canvas.drawColor(Color.WHITE)
-        frames[index].orEmpty().forEach { drawStroke(canvas, it) }
+        bakeLegacyFrame(index)
+        frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
             textPaint.color = Color.RED
@@ -4017,8 +4113,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun renderFrame(index: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
-        frames[index].orEmpty().forEach { drawStroke(canvas, it) }
+        bakeLegacyFrame(index)
+        frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
             textPaint.color = Color.RED
