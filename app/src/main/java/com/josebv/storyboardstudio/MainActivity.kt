@@ -2787,6 +2787,28 @@ class DrawingView(context: android.content.Context) : View(context) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 1
     }
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
+    // Reusable wet-ink surface. Samples are rasterized once as they arrive; onDraw
+    // only composites this bitmap instead of rebuilding the entire stroke every frame.
+    private var inProgressBitmap: Bitmap? = null
+    private var inProgressCanvas: Canvas? = null
+    private val inProgressPath = Path()
+    private val inProgressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        isDither = true
+    }
+    private val inProgressDisplayPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val inProgressErasePaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+    }
+    private var inProgressBounds: RectF? = null
+    private var inProgressLastPoint: PointF? = null
+    private var inProgressLastMidpoint: PointF? = null
+    private var inProgressLastWidth = 0f
+    private var inProgressErase = false
+    private var inProgressColor = Color.BLACK
+    private var inProgressAlpha = 255
     private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -2857,6 +2879,96 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidateAllFrameCaches()
         encodedImageCache.clear()
         decodedImageCache.clear()
+        inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
+        inProgressBitmap = null
+        inProgressCanvas = null
+        inProgressBounds = null
+        inProgressLastPoint = null
+        inProgressLastMidpoint = null
+    }
+
+    private fun ensureInProgressSurface() {
+        if (inProgressBitmap == null || inProgressBitmap?.isRecycled == true) {
+            inProgressBitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+            inProgressCanvas = Canvas(inProgressBitmap!!)
+        }
+    }
+
+    private fun beginInProgressStroke(point: PointF, width: Float, stroke: Stroke) {
+        ensureInProgressSurface()
+        inProgressErase = stroke.erase
+        inProgressColor = Color.rgb(Color.red(stroke.color), Color.green(stroke.color), Color.blue(stroke.color))
+        inProgressAlpha = Color.alpha(stroke.color)
+        inProgressPaint.color = if (stroke.erase) Color.WHITE else inProgressColor
+        inProgressLastPoint = PointF(point.x, point.y)
+        inProgressLastMidpoint = null
+        inProgressLastWidth = (width * 2f).coerceAtLeast(1f)
+        inProgressBounds = RectF(point.x, point.y, point.x, point.y)
+        inProgressCanvas?.drawCircle(point.x, point.y, inProgressLastWidth * 0.5f, Paint(inProgressPaint).apply { style = Paint.Style.FILL })
+        expandInProgressBounds(point, inProgressLastWidth)
+    }
+
+    private fun expandInProgressBounds(point: PointF, width: Float) {
+        val pad = width * 0.5f + 3f
+        val bounds = inProgressBounds ?: RectF(point.x, point.y, point.x, point.y).also { inProgressBounds = it }
+        bounds.union(point.x - pad, point.y - pad, point.x + pad, point.y + pad)
+    }
+
+    private fun appendInProgressSample(point: PointF, width: Float) {
+        val previous = inProgressLastPoint ?: run {
+            inProgressLastPoint = PointF(point.x, point.y)
+            return
+        }
+        val distance = kotlin.math.hypot((point.x - previous.x).toDouble(), (point.y - previous.y).toDouble()).toFloat()
+        if (distance < 0.35f) return
+        val midpoint = PointF((previous.x + point.x) * 0.5f, (previous.y + point.y) * 0.5f)
+        val nextWidth = (width * 2f).coerceAtLeast(1f)
+        inProgressPaint.strokeWidth = ((inProgressLastWidth + nextWidth) * 0.5f).coerceAtLeast(1f)
+        inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
+        inProgressPath.reset()
+        val start = inProgressLastMidpoint ?: previous
+        inProgressPath.moveTo(start.x, start.y)
+        inProgressPath.quadTo(previous.x, previous.y, midpoint.x, midpoint.y)
+        inProgressCanvas?.drawPath(inProgressPath, inProgressPaint)
+        inProgressLastPoint = PointF(point.x, point.y)
+        inProgressLastMidpoint = midpoint
+        inProgressLastWidth = nextWidth
+        expandInProgressBounds(previous, inProgressPaint.strokeWidth)
+        expandInProgressBounds(point, nextWidth)
+    }
+
+    private fun finishInProgressPreview() {
+        val last = inProgressLastPoint ?: return
+        val midpoint = inProgressLastMidpoint
+        if (midpoint != null) {
+            inProgressPath.reset()
+            inProgressPath.moveTo(midpoint.x, midpoint.y)
+            inProgressPath.lineTo(last.x, last.y)
+            inProgressPaint.strokeWidth = inProgressLastWidth
+            inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
+            inProgressCanvas?.drawPath(inProgressPath, inProgressPaint)
+            expandInProgressBounds(last, inProgressLastWidth)
+        }
+    }
+
+    private fun compositeInProgressIntoFrameCache() {
+        val bitmap = inProgressBitmap ?: return
+        val bounds = inProgressBounds ?: return
+        val base = cachedFrameBitmap()
+        val target = Canvas(base)
+        val paint = if (inProgressErase) inProgressErasePaint else Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = inProgressAlpha }
+        target.save()
+        target.clipRect(bounds)
+        target.drawBitmap(bitmap, 0f, 0f, paint)
+        target.restore()
+        // Clear only the dirty rectangle so the reusable surface is ready for the
+        // next rapid stroke without allocating or clearing an entire 8 MB bitmap.
+        inProgressCanvas?.drawRect(bounds, Paint().apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        })
+        inProgressBounds = null
+        inProgressLastPoint = null
+        inProgressLastMidpoint = null
     }
 
     private fun cachedFrameBitmap(): Bitmap {
@@ -2903,6 +3015,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         decodedImageCache.clear()
         invalidateAllFrameCaches()
         current = null
+        inProgressBounds = null
+        inProgressLastPoint = null
+        inProgressLastMidpoint = null
+        inProgressCanvas?.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         cancelSelection()
         invalidate()
         onChanged?.invoke()
@@ -3144,9 +3260,25 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         val layer = canvas.saveLayer(boardBounds, null)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-        // Render the in-progress stroke as one smoothed path, not as overlapping
-        // alpha-blended samples. This keeps the selected color and transparency uniform.
-        current?.let { drawStroke(canvas, it) }
+        // Wet ink is incrementally rasterized as input arrives. Compositing a bitmap
+        // here avoids rebuilding paths, distance tables and thousands of samples on
+        // every frame while the user is drawing.
+        if (current != null) {
+            val wetBitmap = inProgressBitmap
+            val wetBounds = inProgressBounds
+            if (wetBitmap != null && wetBounds != null) {
+                canvas.save()
+                canvas.clipRect(wetBounds)
+                if (inProgressErase) {
+                    canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+                } else {
+                    inProgressDisplayPaint.alpha = inProgressAlpha
+                    canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
+                    inProgressDisplayPaint.alpha = 255
+                }
+                canvas.restore()
+            }
+        }
         if (selectedStrokes.isNotEmpty()) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
@@ -3656,6 +3788,10 @@ class DrawingView(context: android.content.Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                 if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
+                // Ask Android for unbuffered stylus delivery while inking. Historical
+                // samples are still consumed below as a safety net for batched devices.
+                requestUnbufferedDispatch(event)
+                parent?.requestDisallowInterceptTouchEvent(true)
                 val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
                 if (!eraseStroke) onColorUsed?.invoke(color)
                 val strokeColor = Color.argb(
@@ -3668,8 +3804,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
                 redoFrames.remove(frame)
                 clearRedoSnapshots.remove(frame)
-                current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
-                strokes().add(current!!)
+                val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
+                current = stroke
+                strokes().add(stroke)
+                beginInProgressStroke(point, initialWidth, stroke)
                 invalidate()
                 return true
             }
@@ -3692,6 +3830,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                                 val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
                                 stroke.points.add(point)
                                 stroke.widths.add(nextWidth)
+                                appendInProgressSample(point, nextWidth)
                             }
                         }
                     }
@@ -3704,13 +3843,18 @@ class DrawingView(context: android.content.Context) : View(context) {
                     }
                     appendSample(event.getX(pointer), event.getY(pointer), event.getPressure(pointer))
                 }
-                invalidate()
+                postInvalidateOnAnimation()
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val completed = current
+                if (completed != null) {
+                    finishInProgressPreview()
+                    compositeInProgressIntoFrameCache()
+                }
                 current = null
-                invalidateFrameCache()
                 invalidate()
+                parent?.requestDisallowInterceptTouchEvent(false)
                 onChanged?.invoke()
                 onHistoryAction?.invoke()
                 return true

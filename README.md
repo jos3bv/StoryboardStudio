@@ -7,3 +7,8 @@ Cambios de esta versión: historial limitado a tres pasos y acotado al lienzo/l�
 Consulta `CHANGELOG_0.9.43.txt` para el detalle.
 
 Compilación: sigue las instrucciones de `COMPILAR_APK_PASO_A_PASO.txt`.
+
+
+## Versión 0.9.44
+
+Optimización del dibujo incremental del lápiz y la goma. Consulta `CHANGELOG_0.9.44.txt` para los detalles y las limitaciones de verificación.
