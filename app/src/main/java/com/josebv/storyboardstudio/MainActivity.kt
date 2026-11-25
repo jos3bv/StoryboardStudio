@@ -258,7 +258,7 @@ class MainActivity : Activity() {
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(dp(8), dp(2), dp(8), dp(8))
+            setPadding(dp(8), dp(10), dp(8), dp(18))
         }
 
         val picker = HueSatValPickerView(
@@ -434,7 +434,9 @@ class MainActivity : Activity() {
             textSize = 12f
             gravity = Gravity.CENTER
         }
-        sideContent.addView(importLabel, LinearLayout.LayoutParams(-1, dp(25)))
+        sideContent.addView(importLabel, LinearLayout.LayoutParams(-1, dp(25)).apply {
+            setMargins(0, dp(10), 0, 0)
+        })
         val imports = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -689,16 +691,17 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        // Keep the toolbar and all three control groups exactly the same height.
-        // This prevents the zoom slider or shot label from increasing the row height
-        // and pinning the icon buttons to its upper edge.
+        // Center every toolbar control on the same vertical axis as the zoom slider.
+        // Do not offset icons with top padding: it shifts the play button visually.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(0, dp(3), 0, 0)
+                    child.setPadding(0, 0, 0, 0)
                     child.gravity = Gravity.CENTER
+                    child.translationY = 0f
+                } else {
                     child.translationY = 0f
                 }
             }
@@ -850,7 +853,7 @@ class MainActivity : Activity() {
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp, transparent = true)
-        button.setPadding(0, dp(8), 0, 0)
+        button.setPadding(0, 0, 0, 0)
         button.isClickable = true
         return button
     }
@@ -2633,7 +2636,7 @@ private class HueSatValPickerView(
         val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
         // Match the hue strip and swatch blocks to the same usable width.
         val squareWidth = width.toFloat().coerceAtLeast(1f)
-        val squareHeight = min(squareWidth * 2.22f, availableHeight * (2f / 3f)).coerceAtLeast(1f)
+        val squareHeight = min(squareWidth * 2.22f, availableHeight).coerceAtLeast(1f)
         val left = (width - squareWidth) / 2f
         square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
         paint.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
@@ -2956,6 +2959,18 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
     }
 
+    private fun clearInProgressDirtyRegion() {
+        val bounds = inProgressBounds
+        if (bounds != null) {
+            inProgressCanvas?.drawRect(bounds, Paint().apply {
+                xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+            })
+        }
+        inProgressBounds = null
+        inProgressLastPoint = null
+        inProgressLastMidpoint = null
+    }
+
     private fun compositeInProgressIntoFrameCache() {
         val bitmap = inProgressBitmap ?: return
         val bounds = inProgressBounds ?: return
@@ -2968,12 +2983,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         target.restore()
         // Clear only the dirty rectangle so the reusable surface is ready for the
         // next rapid stroke without allocating or clearing an entire 8 MB bitmap.
-        inProgressCanvas?.drawRect(bounds, Paint().apply {
-            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
-        })
-        inProgressBounds = null
-        inProgressLastPoint = null
-        inProgressLastMidpoint = null
+        clearInProgressDirtyRegion()
     }
 
     private fun cachedFrameBitmap(): Bitmap {
@@ -3276,6 +3286,18 @@ class DrawingView(context: android.content.Context) : View(context) {
                 canvas.clipRect(wetBounds)
                 if (inProgressErase) {
                     canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+                    // Notes are a separate overlay in the document model. Redraw them
+                    // after the eraser mask so the temporary white paper reveal cannot
+                    // make the note text appear erased during the gesture.
+                    notes[frame]?.firstOrNull()?.let { note ->
+                        val previousColor = textPaint.color
+                        val previousSize = textPaint.textSize
+                        textPaint.textSize = 34f
+                        textPaint.color = Color.RED
+                        canvas.drawText(note, 24f, 1030f, textPaint)
+                        textPaint.color = previousColor
+                        textPaint.textSize = previousSize
+                    }
                 } else {
                     inProgressDisplayPaint.alpha = inProgressAlpha
                     canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
@@ -3855,7 +3877,15 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val completed = current
                 if (completed != null) {
                     finishInProgressPreview()
-                    compositeInProgressIntoFrameCache()
+                    if (completed.erase) {
+                        // Rebuild from the ordered stroke model. The cached bitmap also
+                        // contains note overlays; applying DST_OUT directly to that cache
+                        // would erase the note and leave a white trace until a later redraw.
+                        clearInProgressDirtyRegion()
+                        invalidateFrameCache()
+                    } else {
+                        compositeInProgressIntoFrameCache()
+                    }
                 }
                 current = null
                 invalidate()
