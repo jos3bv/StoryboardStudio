@@ -215,7 +215,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, dp(14), 0)
         }
         top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.72f))
-        root.addView(top, LinearLayout.LayoutParams(-1, dp(50)))
+        root.addView(top, LinearLayout.LayoutParams(-1, dp(40)))
         // Work area: left tool panel and a large central canvas.
         val work = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -296,10 +296,7 @@ class MainActivity : Activity() {
                 textSize = 20f
                 isAllCaps = false
                 setTextColor(Color.LTGRAY)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(1), Color.rgb(205, 205, 205))
-                }
+                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
                 elevation = 0f
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
@@ -309,7 +306,7 @@ class MainActivity : Activity() {
                 minimumHeight = 0
                 stateListAnimator = null
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 52)
+                setButtonIcon(this, iconName, 40)
             }
         }
 
@@ -330,8 +327,8 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             // Exact zero margins: adjacent button bounds share an edge.
-            row.addView(button, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(0, 0, 0, 0)
+            row.addView(button, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(0, 0, dp(1), 0)
             })
         }
 
@@ -357,9 +354,9 @@ class MainActivity : Activity() {
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(56)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(56)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(112)))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(40)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(80)))
 
         val importLabel = TextView(this).apply {
             text = "Importar"
@@ -386,24 +383,21 @@ class MainActivity : Activity() {
                 minHeight = 0
                 minimumHeight = 0
                 setTextColor(Color.LTGRAY)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(1), Color.rgb(205, 205, 205))
-                }
+                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
                 elevation = 0f
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 52)
+                setButtonIcon(this, iconName, 40)
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(0, 0, 0, 0)
+            imports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(0, 0, dp(1), 0)
             })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
         importButton("ic_import_srt", "Importar archivo SRT") { chooseSrt() }
-        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(62)))
+        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(40)))
 
         val exportSpacer = View(this)
         sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.1f))
@@ -432,24 +426,21 @@ class MainActivity : Activity() {
                 minHeight = 0
                 minimumHeight = 0
                 setTextColor(Color.LTGRAY)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(1), Color.rgb(205, 205, 205))
-                }
+                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
                 elevation = 0f
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 52)
+                setButtonIcon(this, iconName, 40)
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                setMargins(0, 0, 0, 0)
+            exports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(0, 0, dp(1), 0)
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
         exportButton("ic_export_pdf", "Exportar PDF") { exportPdf() }
-        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(62)))
+        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(40)))
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
         // Sliders are positioned beside the canvas, matching the annotated layout.
@@ -597,7 +588,9 @@ class MainActivity : Activity() {
         toolbar.addView(zoomGroup, LinearLayout.LayoutParams(dp(430), dp(40)).apply {
             gravity = Gravity.CENTER_VERTICAL
         })
-        // The 40 dp control groups are vertically centered inside a 52 dp toolbar row.
+        // Keep the toolbar and all three control groups exactly the same height.
+        // This prevents the zoom slider or shot label from increasing the row height
+        // and pinning the icon buttons to its upper edge.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
             for (i in 0 until group.childCount) {
@@ -609,7 +602,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(52)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
