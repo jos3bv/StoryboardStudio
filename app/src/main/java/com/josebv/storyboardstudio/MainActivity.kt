@@ -71,6 +71,8 @@ class MainActivity : Activity() {
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
     private var inlineColorPicker: HueSatValPickerView? = null
+    private var selectedColorIndicator: View? = null
+    private var selectionActionsView: View? = null
     private var brushSizeSlider: VerticalSliderView? = null
 
     private val frameDurations = mutableListOf(3000)
@@ -177,13 +179,20 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(65, 65, 65))
             setPadding(0, 0, dp(10), 0)
         }
-        val archivoButton = addHeaderButton(top, "Archivo", dp(120)) { }
-        archivoButton.setOnClickListener { showArchivoPopup(archivoButton) }
-        val menuDivider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
-        top.addView(menuDivider, LinearLayout.LayoutParams(dp(1), dp(34)).apply {
-            setMargins(dp(2), 0, dp(2), 0)
-        })
-        addHeaderButton(top, "Guardar", dp(98)) { saveProject() }
+        // Acciones de Archivo visibles permanentemente en el encabezado.
+        fun headerAction(label: String, widthDp: Int, action: () -> Unit) {
+            val button = addHeaderButton(top, label, dp(widthDp), action)
+            button.textSize = 9f
+            button.setPadding(dp(1), 0, dp(1), 0)
+            button.maxLines = 1
+        }
+        headerAction("Nueva", 52, ::confirmNewSession)
+        headerAction("Abrir sesión", 70, ::openSessionFile)
+        headerAction("Abrir", 48, ::showLocalSessionsDialog)
+        headerAction("Guardar como", 76, ::saveSessionAsFile)
+        headerAction("Guardar copia", 80, ::saveLocalSnapshot)
+        val saveHeaderButton = addHeaderButton(top, "Guardar", dp(60)) { saveProject() }
+        saveHeaderButton.textSize = 10f
         projectTitleLabel = TextView(this).apply {
             text = projectName
             setTextColor(Color.WHITE)
@@ -191,8 +200,9 @@ class MainActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(3), 0)
-            maxWidth = dp(260)
+            includeFontPadding = false
+            setPadding(dp(10), 0, dp(8), 0)
+            maxWidth = dp(220)
             setOnClickListener { editProjectName() }
             contentDescription = "Nombre de la sesión. Toca para cambiarlo."
         }
@@ -203,11 +213,12 @@ class MainActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false
             setPadding(0, 0, dp(8), 0)
         }
         top.addView(status, LinearLayout.LayoutParams(0, -1, 1f))
         val brand = TextView(this).apply {
-            text = "BV'Storyboarder"
+            text = "BV'Storyboarder  v${packageManager.getPackageInfo(packageName, 0).versionName}"
             setTextColor(Color.WHITE)
             textSize = 16f
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
@@ -225,21 +236,34 @@ class MainActivity : Activity() {
         val sidebar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.rgb(67, 67, 67))
-            setPadding(0, dp(3), 0, dp(3))
+            setPadding(dp(3), dp(3), dp(3), dp(3))
         }
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(2), 0, dp(2))
+            setPadding(dp(3), dp(2), dp(3), dp(2))
         }
 
         val picker = HueSatValPickerView(
             this, drawing.currentHue(), drawing.currentSaturation() / 100f, drawing.currentValue() / 100f
         ) { h, sat, v ->
             drawing.setColorFromHsv(h, sat, v)
+            updateSelectedColorIndicator()
             scheduleAutosave()
         }
         inlineColorPicker = picker
+        selectedColorIndicator = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(drawing.currentColor())
+                setStroke(dp(1), Color.WHITE)
+                cornerRadius = dp(4).toFloat()
+            }
+            contentDescription = "Color seleccionado"
+        }
+        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(dp(30), dp(12)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(0, dp(2), 0, dp(2))
+        })
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 4.0f).apply {
             setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(10))
         })
@@ -266,6 +290,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     drawing.setColor(color)
                     picker.setColor(color)
+                    updateSelectedColorIndicator()
                     scheduleAutosave()
                 }
             }
@@ -289,8 +314,15 @@ class MainActivity : Activity() {
             clipToPadding = false
         }
 
+        val toolButtons = mutableListOf<Button>()
+        fun updateActiveTool(button: Button) {
+            toolButtons.forEach { item ->
+                item.tag = (item === button)
+                item.compoundDrawables.getOrNull(1)?.alpha = if (item === button) 255 else 128
+            }
+        }
         fun tool(iconName: String, description: String, action: () -> Unit): Button {
-            return Button(this).apply {
+            val button = Button(this).apply {
                 text = ""
                 contentDescription = description
                 textSize = 20f
@@ -305,9 +337,18 @@ class MainActivity : Activity() {
                 minHeight = 0
                 minimumHeight = 0
                 stateListAnimator = null
-                setOnClickListener { action() }
-                setButtonIcon(this, iconName, 40)
+                setOnClickListener {
+                    if (description != "Selección tipo lazo") {
+                        drawing.cancelSelection()
+                        selectionActionsView?.visibility = View.GONE
+                    }
+                    action()
+                    updateActiveTool(this)
+                }
+                setButtonIcon(this, iconName, 28)
             }
+            toolButtons.add(button)
+            return button
         }
 
         val toolRow1 = LinearLayout(this).apply {
@@ -327,7 +368,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             // Exact zero margins: adjacent button bounds share an edge.
-            row.addView(button, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+            row.addView(button, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
@@ -352,11 +393,17 @@ class MainActivity : Activity() {
             scheduleAutosave()
         })
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
+        val lassoButton = tool("ic_pressure", "Selección tipo lazo") {
+            drawing.startLassoSelection()
+            selectionActionsView?.visibility = View.VISIBLE
+        }
+        addToolCell(toolRow2, lassoButton)
+        updateActiveTool(toolButtons.first())
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(40)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(80)))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(28)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(28)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(56)))
 
         val importLabel = TextView(this).apply {
             text = "Importar"
@@ -388,16 +435,18 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 40)
+                setButtonIcon(this, iconName, 28)
+                tag = false
+                compoundDrawables.getOrNull(1)?.alpha = 128
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+            imports.addView(b, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
         importButton("ic_import_srt", "Importar archivo SRT") { chooseSrt() }
-        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(40)))
+        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(28)))
 
         val exportSpacer = View(this)
         sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.1f))
@@ -431,16 +480,18 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 40)
+                setButtonIcon(this, iconName, 28)
+                tag = false
+                compoundDrawables.getOrNull(1)?.alpha = 128
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+            exports.addView(b, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
         exportButton("ic_export_pdf", "Exportar PDF") { exportPdf() }
-        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(40)))
+        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(28)))
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
         // Sliders are positioned beside the canvas, matching the annotated layout.
@@ -476,6 +527,26 @@ class MainActivity : Activity() {
             leftMargin = dp(32)
             topMargin = dp(18)
         })
+        val selectionActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        val acceptSelection = addCompactButton(selectionActions, "Aceptar", "Confirmar transformación") {
+            drawing.confirmSelection()
+            selectionActionsView?.visibility = View.GONE
+            recordHistory()
+            scheduleAutosave()
+        }
+        val cancelSelection = addCompactButton(selectionActions, "Cancelar", "Cancelar selección") {
+            drawing.cancelSelection()
+            selectionActionsView?.visibility = View.GONE
+        }
+        selectionActionsView = selectionActions
+        canvasArea.addView(selectionActions, FrameLayout.LayoutParams(-2, dp(42), Gravity.TOP or Gravity.RIGHT).apply {
+            rightMargin = dp(12)
+            topMargin = dp(12)
+        })
 
         val sliderRail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -484,11 +555,11 @@ class MainActivity : Activity() {
             clipChildren = false
             clipToPadding = false
         }
-        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
-        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(42), 0, 1f))
+        sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(32), 0, 1f))
+        sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(32), 0, 1f))
         canvasArea.addView(
             sliderRail,
-            FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT or Gravity.TOP).apply {
+            FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
                 setMargins(0, 0, 0, 0)
             }
         )
@@ -705,7 +776,7 @@ class MainActivity : Activity() {
                 }
                 MotionEvent.ACTION_HOVER_EXIT -> {
                     iconHovered = false
-                    refreshIconAlpha(191)
+                    refreshIconAlpha(if (button.tag == true) 255 else if (button.tag == false) 128 else 191)
                 }
             }
             false
@@ -717,7 +788,9 @@ class MainActivity : Activity() {
                     refreshIconAlpha(255)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val reset = Runnable { refreshIconAlpha(if (iconHovered) 230 else 191) }
+                    val reset = Runnable {
+                        refreshIconAlpha(if (iconHovered) 230 else if (button.tag == true) 255 else if (button.tag == false) 128 else 191)
+                    }
                     pressReleaseRunnable = reset
                     handler.postDelayed(reset, 150)
                 }
@@ -819,6 +892,16 @@ class MainActivity : Activity() {
         refreshRecentColorSwatches()
     }
 
+    private fun updateSelectedColorIndicator() {
+        val indicator = selectedColorIndicator ?: return
+        indicator.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(drawing.currentColor())
+            setStroke(dp(1), Color.WHITE)
+            cornerRadius = dp(4).toFloat()
+        }
+        indicator.invalidate()
+    }
+
     private fun refreshRecentColorSwatches() {
         val row = recentColorContainer ?: return
         row.removeAllViews()
@@ -829,6 +912,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     drawing.setColor(color)
                     inlineColorPicker?.setColor(color)
+                    updateSelectedColorIndicator()
                     scheduleAutosave()
                 }
             }
@@ -1968,7 +2052,6 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
     private var inlineColorPicker: HueSatValPickerView? = null
-    private var brushSizeSlider: VerticalSliderView? = null
     private var audioDurationMs = 0
     private var audioLoading = false
     private var playheadMs = 0
@@ -2623,6 +2706,24 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var pressureSensitivity = true
     private var eraser = false
 
+    // Editable lasso selection: original strokes remain vector-like point/pressure data.
+    private var lassoEnabled = false
+    private val lassoPoints = mutableListOf<PointF>()
+    private val selectedStrokes = mutableListOf<Stroke>()
+    private var selectionCenterX = 0f
+    private var selectionCenterY = 0f
+    private var selectionTranslateX = 0f
+    private var selectionTranslateY = 0f
+    private var selectionRotation = 0f
+    private var selectionScale = 1f
+    private var selectionLastX = 0f
+    private var selectionLastY = 0f
+    private var selectionLastSpan = 0f
+    private var selectionLastAngle = 0f
+    private var selectionOriginals = mutableListOf<Stroke>()
+    private var selectionFrameBackup: MutableList<Stroke>? = null
+    private val selectionParts = mutableListOf<Pair<Boolean, Stroke>>()
+
     // Viewport transform: drawings remain stored in their original 1920x1080 coordinates.
     private var viewportScale = 1f
     private var viewportRotation = 0f
@@ -2668,12 +2769,12 @@ class DrawingView(context: android.content.Context) : View(context) {
             cacheCanvas.drawBitmap(image, null, dst, imagePaint)
         }
         frames[frame].orEmpty().forEach { stroke ->
-            if (stroke !== current) drawStroke(cacheCanvas, stroke)
+            if (stroke !== current && stroke !in selectedStrokes) drawStroke(cacheCanvas, stroke)
         }
         var noteY = 1030f
         notes[frame]?.firstOrNull()?.let { note ->
             textPaint.textSize = 34f
-            textPaint.color = noteColors[frame] ?: Color.DKGRAY
+            textPaint.color = Color.RED
             cacheCanvas.drawText(note, 24f, noteY, textPaint)
             textPaint.color = Color.DKGRAY
         }
@@ -2686,7 +2787,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
-    fun setFrame(index: Int) { frame = index; invalidate() }
+    fun setFrame(index: Int) { cancelSelection(); frame = index; invalidate() }
     fun clearProject() {
         frames.clear()
         redoFrames.clear()
@@ -2697,6 +2798,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         importedImages.clear()
         invalidateAllFrameCaches()
         current = null
+        cancelSelection()
         invalidate()
         onChanged?.invoke()
     }
@@ -2799,7 +2901,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             noteColors.remove(frame)
         } else {
             notes[frame] = mutableListOf(value)
-            noteColors[frame] = textColor
+            noteColors[frame] = Color.RED
         }
         invalidateFrameCache()
         invalidate()
@@ -2921,8 +3023,196 @@ class DrawingView(context: android.content.Context) : View(context) {
         val layer = canvas.saveLayer(boardBounds, null)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         current?.let { drawStroke(canvas, it) }
+        if (selectedStrokes.isNotEmpty()) {
+            canvas.save()
+            canvas.translate(selectionTranslateX, selectionTranslateY)
+            canvas.rotate(selectionRotation, selectionCenterX, selectionCenterY)
+            canvas.scale(selectionScale, selectionScale, selectionCenterX, selectionCenterY)
+            selectedStrokes.forEach { drawStroke(canvas, it) }
+            val bounds = selectionBounds()
+            val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(35, 155, 235)
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+                pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 8f), 0f)
+            }
+            canvas.drawRect(bounds, selectionPaint)
+            canvas.restore()
+        }
+        if (lassoEnabled && lassoPoints.size > 1) {
+            val path = Path().apply {
+                moveTo(lassoPoints.first().x, lassoPoints.first().y)
+                lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+            canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(35, 155, 235)
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+                pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 7f), 0f)
+            })
+        }
         canvas.restoreToCount(layer)
         canvas.restore()
+    }
+
+    fun startLassoSelection() {
+        lassoEnabled = true
+        lassoPoints.clear()
+        selectedStrokes.clear()
+        selectionOriginals.clear()
+        selectionFrameBackup = null
+        selectionParts.clear()
+        selectionTranslateX = 0f
+        selectionTranslateY = 0f
+        selectionRotation = 0f
+        selectionScale = 1f
+        invalidateFrameCache()
+        invalidate()
+    }
+
+    fun hasSelection(): Boolean = selectedStrokes.isNotEmpty()
+
+    fun confirmSelection() {
+        if (selectedStrokes.isEmpty()) {
+            lassoEnabled = false
+            lassoPoints.clear()
+            invalidate()
+            return
+        }
+        selectedStrokes.forEach { stroke ->
+            stroke.points.forEach { point ->
+                val x = point.x - selectionCenterX
+                val y = point.y - selectionCenterY
+                val scaledX = x * selectionScale
+                val scaledY = y * selectionScale
+                val radians = Math.toRadians(selectionRotation.toDouble())
+                val cos = kotlin.math.cos(radians).toFloat()
+                val sin = kotlin.math.sin(radians).toFloat()
+                point.x = selectionCenterX + scaledX * cos - scaledY * sin + selectionTranslateX
+                point.y = selectionCenterY + scaledX * sin + scaledY * cos + selectionTranslateY
+            }
+            if (selectionScale != 1f) {
+                for (i in stroke.widths.indices) stroke.widths[i] = (stroke.widths[i] * selectionScale).coerceAtLeast(0.5f)
+            }
+        }
+        if (selectionParts.isNotEmpty()) {
+            frames[frame] = selectionParts.map { it.second }.toMutableList()
+        }
+        selectedStrokes.clear()
+        selectionOriginals.clear()
+        selectionFrameBackup = null
+        selectionParts.clear()
+        lassoPoints.clear()
+        lassoEnabled = false
+        selectionTranslateX = 0f
+        selectionTranslateY = 0f
+        selectionRotation = 0f
+        selectionScale = 1f
+        invalidateFrameCache()
+        invalidate()
+        onChanged?.invoke()
+    }
+
+    fun cancelSelection() {
+        selectionFrameBackup?.let { backup -> frames[frame] = cloneStrokes(backup) }
+        selectedStrokes.clear()
+        selectionOriginals.clear()
+        selectionFrameBackup = null
+        selectionParts.clear()
+        lassoPoints.clear()
+        lassoEnabled = false
+        selectionTranslateX = 0f
+        selectionTranslateY = 0f
+        selectionRotation = 0f
+        selectionScale = 1f
+        invalidateFrameCache()
+        invalidate()
+    }
+
+    private fun selectionBounds(): RectF {
+        val pts = selectedStrokes.flatMap { it.points }
+        if (pts.isEmpty()) return RectF()
+        val left = pts.minOf { it.x }; val right = pts.maxOf { it.x }
+        val top = pts.minOf { it.y }; val bottom = pts.maxOf { it.y }
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun pointInPolygon(point: PointF, polygon: List<PointF>): Boolean {
+        var inside = false
+        var j = polygon.lastIndex
+        for (i in polygon.indices) {
+            val a = polygon[i]; val b = polygon[j]
+            if (((a.y > point.y) != (b.y > point.y)) &&
+                (point.x < (b.x - a.x) * (point.y - a.y) / ((b.y - a.y).takeIf { it != 0f } ?: 0.0001f) + a.x)) inside = !inside
+            j = i
+        }
+        return inside
+    }
+
+    private fun finishLasso() {
+        lassoEnabled = false
+        if (lassoPoints.size < 3) { lassoPoints.clear(); invalidate(); return }
+        val originalFrame = frames[frame].orEmpty()
+        val backup = cloneStrokes(originalFrame)
+        val replacement = mutableListOf<Stroke>()
+        val parts = mutableListOf<Pair<Boolean, Stroke>>()
+        val selected = mutableListOf<Stroke>()
+
+        originalFrame.forEach { stroke ->
+            if (stroke.erase || stroke.points.isEmpty()) {
+                parts.add(false to stroke)
+                replacement.add(stroke)
+            } else {
+                var segmentStart = 0
+                var segmentInside = pointInPolygon(stroke.points[0], lassoPoints)
+                fun flushSegment(endExclusive: Int) {
+                    if (endExclusive <= segmentStart) return
+                    val segment = Stroke(
+                        stroke.points.subList(segmentStart, endExclusive).map { PointF(it.x, it.y) }.toMutableList(),
+                        stroke.widths.subList(segmentStart, min(endExclusive, stroke.widths.size)).toMutableList(),
+                        stroke.color,
+                        stroke.erase
+                    )
+                    if (segment.widths.size < segment.points.size) {
+                        while (segment.widths.size < segment.points.size) segment.widths.add(segment.widths.lastOrNull() ?: 4f)
+                    }
+                    parts.add(segmentInside to segment)
+                    if (segmentInside) selected.add(segment) else replacement.add(segment)
+                }
+                for (pointIndex in 1 until stroke.points.size) {
+                    val inside = pointInPolygon(stroke.points[pointIndex], lassoPoints)
+                    if (inside != segmentInside) {
+                        flushSegment(pointIndex)
+                        segmentStart = pointIndex
+                        segmentInside = inside
+                    }
+                }
+                flushSegment(stroke.points.size)
+            }
+        }
+
+        if (selected.isEmpty()) {
+            lassoPoints.clear()
+            invalidate()
+            return
+        }
+        selectionFrameBackup = backup
+        selectionParts.clear()
+        selectionParts.addAll(parts)
+        frames[frame] = replacement
+        selectedStrokes.clear()
+        selectedStrokes.addAll(selected)
+        selectionOriginals = selected.map { st ->
+            Stroke(st.points.map { PointF(it.x, it.y) }.toMutableList(), st.widths.toMutableList(), st.color, st.erase)
+        }.toMutableList()
+        val bounds = selectionBounds()
+        selectionCenterX = bounds.centerX()
+        selectionCenterY = bounds.centerY()
+        selectionTranslateX = 0f; selectionTranslateY = 0f
+        selectionRotation = 0f; selectionScale = 1f
+        lassoPoints.clear()
+        invalidateFrameCache()
+        invalidate()
     }
 
     private fun viewToDrawingPoint(
@@ -3018,7 +3308,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         // Sample the smoothed path and interpolate pressure width along it.
         val measure = PathMeasure(smoothed, false)
         val length = measure.length
-        val samples = max(2, min(900, (length / 5f).toInt() + 1))
+        val samples = max(2, min(420, (length / 7f).toInt() + 1))
         val position = FloatArray(2)
         val tangent = FloatArray(2)
         var previousPoint: PointF? = null
@@ -3058,6 +3348,67 @@ class DrawingView(context: android.content.Context) : View(context) {
         val boardH = 9f * boardScale
         val left = (width - boardW) / 2f
         val top = (height - boardH) / 2f
+
+        if (lassoEnabled || selectedStrokes.isNotEmpty()) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    if (lassoEnabled) {
+                        lassoPoints.clear()
+                        lassoPoints.add(viewToDrawingPoint(event.x, event.y, left, top, boardScale))
+                    } else {
+                        selectionLastX = event.x; selectionLastY = event.y
+                        selectionLastSpan = 0f
+                    }
+                    invalidate()
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (selectedStrokes.isNotEmpty() && event.pointerCount >= 2) {
+                        val p0 = viewToDrawingPoint(event.getX(0), event.getY(0), left, top, boardScale)
+                        val p1 = viewToDrawingPoint(event.getX(1), event.getY(1), left, top, boardScale)
+                        selectionLastX = (p0.x + p1.x) / 2f
+                        selectionLastY = (p0.y + p1.y) / 2f
+                        selectionLastSpan = kotlin.math.hypot((p1.x-p0.x).toDouble(), (p1.y-p0.y).toDouble()).toFloat()
+                        selectionLastAngle = Math.toDegrees(kotlin.math.atan2((p1.y-p0.y).toDouble(), (p1.x-p0.x).toDouble())).toFloat()
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (lassoEnabled) {
+                        val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
+                        val last = lassoPoints.lastOrNull()
+                        if (last == null || kotlin.math.hypot((point.x-last.x).toDouble(), (point.y-last.y).toDouble()) >= 2.5) lassoPoints.add(point)
+                    } else if (selectedStrokes.isNotEmpty() && event.pointerCount >= 2) {
+                        val p0 = viewToDrawingPoint(event.getX(0), event.getY(0), left, top, boardScale)
+                        val p1 = viewToDrawingPoint(event.getX(1), event.getY(1), left, top, boardScale)
+                        val cx = (p0.x+p1.x)/2f; val cy = (p0.y+p1.y)/2f
+                        val span = kotlin.math.hypot((p1.x-p0.x).toDouble(), (p1.y-p0.y).toDouble()).toFloat()
+                        val angle = Math.toDegrees(kotlin.math.atan2((p1.y-p0.y).toDouble(), (p1.x-p0.x).toDouble())).toFloat()
+                        selectionTranslateX += cx-selectionLastX; selectionTranslateY += cy-selectionLastY
+                        if (selectionLastSpan > 0f && span > 0f) selectionScale = (selectionScale * span/selectionLastSpan).coerceIn(0.1f, 8f)
+                        var da = angle-selectionLastAngle
+                        while (da > 180f) da -= 360f
+                        while (da < -180f) da += 360f
+                        selectionRotation += da
+                        selectionLastX = cx; selectionLastY = cy; selectionLastSpan = span; selectionLastAngle = angle
+                    } else if (selectedStrokes.isNotEmpty()) {
+                        val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
+                        val previous = viewToDrawingPoint(selectionLastX, selectionLastY, left, top, boardScale)
+                        selectionTranslateX += point.x-previous.x
+                        selectionTranslateY += point.y-previous.y
+                        selectionLastX = event.x; selectionLastY = event.y
+                    }
+                    invalidate()
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (lassoEnabled) finishLasso()
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    return true
+                }
+            }
+        }
 
         if (!stylus) {
             when (event.actionMasked) {
@@ -3289,7 +3640,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames[index].orEmpty().forEach { drawStroke(canvas, it) }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
-            textPaint.color = noteColors[index] ?: Color.DKGRAY
+            textPaint.color = Color.RED
             canvas.drawText(it, 24f, 1030f, textPaint)
             textPaint.color = Color.DKGRAY
         }
@@ -3318,7 +3669,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames[index].orEmpty().forEach { drawStroke(canvas, it) }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
-            textPaint.color = noteColors[index] ?: Color.DKGRAY
+            textPaint.color = Color.RED
             canvas.drawText(it, 24f, 1030f, textPaint)
             textPaint.color = Color.DKGRAY
         }
