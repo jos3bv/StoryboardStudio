@@ -1,6 +1,14 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.49 - unified wet-stroke preview/commit, white canvas and timeline button inset.
+import androidx.ink.authoring.InProgressStrokesView
+import androidx.ink.authoring.InProgressStrokesFinishedListener
+import androidx.ink.authoring.InProgressStrokeId
+import androidx.ink.brush.Brush as InkBrush
+import androidx.ink.brush.StockBrushes
+import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
+import androidx.ink.strokes.Stroke as InkStroke
+
+// BV'Storyboarder 1.0.0 - AndroidX Ink authoring engine and unified RGBA frame bitmap.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -540,6 +548,25 @@ class MainActivity : Activity() {
             clipToPadding = false
         }
         canvasArea.addView(drawing, FrameLayout.LayoutParams(-1, -1))
+
+        // AndroidX Ink renders wet strokes in this transparent overlay. A relay view
+        // forwards input to DrawingView so pan/zoom/lasso and the existing toolbar remain intact.
+        val inkView = InProgressStrokesView(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        drawing.attachInkInputView(inkView)
+        canvasArea.addView(inkView, FrameLayout.LayoutParams(-1, -1))
+        val inkInputRelay = View(this).apply {
+            isClickable = true
+            setOnTouchListener { relay, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN ||
+                    event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                    relay.requestUnbufferedDispatch(event)
+                }
+                drawing.onTouchEvent(event)
+            }
+        }
+        canvasArea.addView(inkInputRelay, FrameLayout.LayoutParams(-1, -1))
 
         val canvasButtons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1776,6 +1803,11 @@ class MainActivity : Activity() {
     }
 
     private fun applySessionJson(root: JSONObject) {
+        val drawingState = root.optJSONObject("drawing")
+            ?: throw IllegalArgumentException("El archivo no contiene un documento de dibujo válido")
+        if (drawingState.optInt("formatVersion", 0) != 1) {
+            throw IllegalArgumentException("La sesión pertenece a un formato anterior y no es compatible con BV'Storyboarder 1.0.0")
+        }
         restoringSession = true
         try {
             stopPlayback()
@@ -1803,7 +1835,7 @@ class MainActivity : Activity() {
                 frameDurations.add(3000)
             }
 
-            drawing.loadJson(root.optJSONObject("drawing") ?: JSONObject())
+            drawing.loadJson(drawingState)
             drawing.resetViewport()
             currentFrame = root.optInt("currentFrame", 0).coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
@@ -2015,7 +2047,7 @@ class MainActivity : Activity() {
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
-                    Environment.DIRECTORY_DOCUMENTS + "/Storyboarder/Exports/" + subfolder
+                    Environment.DIRECTORY_DOCUMENTS + "/BVstoryboarder/Exports/" + subfolder
                 )
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
@@ -2036,7 +2068,7 @@ class MainActivity : Activity() {
         } else {
             // Android 6–9 fallback: app's Documents export folder (legacy shared-storage access is restricted).
             val base = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
-                "Storyboarder/Exports/$subfolder")
+                "BVstoryboarder/Exports/$subfolder")
             if (!base.exists() && !base.mkdirs()) {
                 throw IllegalStateException("No se pudo crear ${base.absolutePath}")
             }
@@ -2762,6 +2794,120 @@ private data class Stroke(
 )
 
 class DrawingView(context: android.content.Context) : View(context) {
+    // AndroidX Ink owns live stylus sampling, pressure modeling and wet-stroke rendering.
+    // The document itself remains a single RGBA bitmap per frame.
+    private var inkInputView: InProgressStrokesView? = null
+    private val inkStrokeModes = mutableMapOf<InProgressStrokeId, Boolean>()
+    private val inkStrokeTargets = mutableMapOf<InProgressStrokeId, Bitmap>()
+    private val inkPointerIds = mutableMapOf<Int, InProgressStrokeId>()
+    private val inkRenderer: CanvasStrokeRenderer by lazy { CanvasStrokeRenderer.create() }
+
+    fun attachInkInputView(view: InProgressStrokesView) {
+        inkInputView = view
+        view.eagerInit()
+        view.addFinishedStrokesListener(object : InProgressStrokesFinishedListener {
+            override fun onStrokesFinished(strokes: Map<InProgressStrokeId, InkStroke>) {
+                if (strokes.isEmpty()) return
+                val affectedFrames = mutableSetOf<Int>()
+                strokes.forEach { (id, stroke) ->
+                    val target = inkStrokeTargets.remove(id) ?: return@forEach
+                    val targetFrame = frameBitmaps.entries.firstOrNull { it.value === target }?.key
+                    val erase = inkStrokeModes.remove(id) ?: false
+                    if (target.isRecycled || targetFrame == null) return@forEach
+                    affectedFrames.add(targetFrame)
+                    if (erase) {
+                        val mask = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+                        try {
+                            inkRenderer.draw(Canvas(mask), stroke, Matrix())
+                            val erasePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                                xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                            }
+                            Canvas(target).drawBitmap(mask, 0f, 0f, erasePaint)
+                            erasePaint.xfermode = null
+                        } finally {
+                            mask.recycle()
+                        }
+                    } else {
+                        inkRenderer.draw(Canvas(target), stroke, Matrix())
+                    }
+                }
+                // Handoff wet -> dry in this same UI-thread callback to avoid a one-frame gap.
+                affectedFrames.forEach { invalidateFrameCache(it) }
+                invalidate()
+                view.removeFinishedStrokes(strokes.keys)
+                onChanged?.invoke()
+                onHistoryAction?.invoke()
+                inkPointerIds.entries.removeAll { it.value in strokes.keys }
+            }
+        })
+    }
+
+    private fun inkBrush(erase: Boolean): InkBrush {
+        val brushSize = activeBrushSize().coerceAtLeast(0.5f)
+        val brushColor = if (erase) Color.rgb(45, 50, 57) else Color.argb(
+            brushOpacity, Color.red(color), Color.green(color), Color.blue(color)
+        )
+        val family = if (!erase && pressureSensitivity) StockBrushes.pressurePen() else StockBrushes.marker()
+        val epsilon = min(brushSize, max(0.05f, brushSize * 0.01f))
+        return InkBrush.createWithColorIntArgb(
+            family = family,
+            colorIntArgb = brushColor,
+            size = brushSize,
+            epsilon = epsilon
+        )
+    }
+
+    private fun viewToDocumentMatrix(): Matrix {
+        val boardScale = min((width * 0.94f) / 16f, (height * 0.90f) / 9f)
+        val boardW = 16f * boardScale
+        val boardH = 9f * boardScale
+        val left = (width - boardW) / 2f
+        val top = (height - boardH) / 2f
+        val source = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
+        val p0 = viewToDrawingPoint(0f, 0f, left, top, boardScale)
+        val px = viewToDrawingPoint(1f, 0f, left, top, boardScale)
+        val py = viewToDrawingPoint(0f, 1f, left, top, boardScale)
+        val destination = floatArrayOf(p0.x, p0.y, px.x, px.y, py.x, py.y)
+        return Matrix().apply { setPolyToPoly(source, 0, destination, 0, 3) }
+    }
+
+    private fun startInkStroke(event: MotionEvent, pointerIndex: Int, erase: Boolean) {
+        val ink = inkInputView ?: return
+        val pointerId = event.getPointerId(pointerIndex)
+        val strokeId = ink.startStroke(
+            event = event,
+            pointerId = pointerId,
+            brush = inkBrush(erase),
+            motionEventToWorldTransform = viewToDocumentMatrix(),
+            strokeToWorldTransform = Matrix()
+        )
+        inkPointerIds[pointerId] = strokeId
+        inkStrokeModes[strokeId] = erase
+        inkStrokeTargets[strokeId] = bitmapFor(frame)
+    }
+
+    private fun addInkSample(event: MotionEvent, pointerIndex: Int) {
+        val pointerId = event.getPointerId(pointerIndex)
+        if (inkPointerIds.containsKey(pointerId)) {
+            inkInputView?.addToStroke(event, pointerId, null)
+        }
+    }
+
+    private fun finishInkStroke(event: MotionEvent, pointerIndex: Int) {
+        val pointerId = event.getPointerId(pointerIndex)
+        if (inkPointerIds.containsKey(pointerId)) {
+            inkInputView?.finishStroke(event, pointerId)
+        }
+    }
+
+    private fun cancelInkStroke(event: MotionEvent, pointerIndex: Int) {
+        val pointerId = event.getPointerId(pointerIndex)
+        val strokeId = inkPointerIds.remove(pointerId) ?: return
+        inkInputView?.cancelStroke(event, pointerId)
+        inkStrokeModes.remove(strokeId)
+        inkStrokeTargets.remove(strokeId)
+    }
+
     private data class ClearSnapshot(
         val strokes: List<Stroke>,
         val image: Bitmap?
@@ -2936,6 +3082,10 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun releaseCachedBitmaps() {
+        inkInputView?.cancelUnfinishedStrokes()
+        inkStrokeModes.clear()
+        inkStrokeTargets.clear()
+        inkPointerIds.clear()
         invalidateAllFrameCaches()
         encodedImageCache.clear()
         decodedImageCache.clear()
@@ -3093,6 +3243,10 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
     fun setFrame(index: Int) { cancelSelection(); frame = index; invalidate() }
     fun clearProject() {
+        inkInputView?.cancelUnfinishedStrokes()
+        inkStrokeModes.clear()
+        inkStrokeTargets.clear()
+        inkPointerIds.clear()
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
@@ -3355,10 +3509,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
-        // The editable bitmap remains RGBA/transparent, but the visible storyboard
-        // paper is white. Erased pixels therefore reveal white instead of the dark UI.
-        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
-        // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
+        // The board is transparent: empty and erased pixels reveal the workspace below.
+        // One RGBA bitmap is the complete artwork for this frame; alpha is preserved.
         val unifiedBitmap = bitmapFor(frame)
         val inkBitmap = unifiedBitmap
         val wetBitmap = inProgressBitmap
@@ -3425,6 +3577,12 @@ class DrawingView(context: android.content.Context) : View(context) {
             })
         }
         canvas.restoreToCount(layer)
+        canvas.restore()
+        canvas.drawRect(left, top, left + w, top + h, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(105, 112, 122)
+            style = Paint.Style.STROKE
+            strokeWidth = 1f / viewportScale.coerceAtLeast(0.1f)
+        })
         canvas.restore()
     }
 
@@ -3602,9 +3760,13 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun selectionHasPixels(bitmap: Bitmap): Boolean {
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        return pixels.any { Color.alpha(it) != 0 }
+        // Scan one row at a time: never allocate an additional full-frame IntArray.
+        val row = IntArray(bitmap.width)
+        for (y in 0 until bitmap.height) {
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            if (row.any { Color.alpha(it) != 0 }) return true
+        }
+        return false
     }
 
     private fun viewToDrawingPoint(
@@ -3920,91 +4082,48 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
 
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val pointerTool = event.getToolType(actionIndex)
+                if (pointerTool != MotionEvent.TOOL_TYPE_STYLUS && pointerTool != MotionEvent.TOOL_TYPE_ERASER) return true
+                val point = viewToDrawingPoint(event.getX(actionIndex), event.getY(actionIndex), left, top, boardScale)
                 if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
-                // Ask Android for unbuffered stylus delivery while inking. Historical
-                // samples are still consumed below as a safety net for batched devices.
-                requestUnbufferedDispatch(event)
                 parent?.requestDisallowInterceptTouchEvent(true)
-                val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
+                val eraseStroke = eraser || pointerTool == MotionEvent.TOOL_TYPE_ERASER
                 if (!eraseStroke) onColorUsed?.invoke(color)
-                val strokeColor = Color.argb(
-                    brushOpacity,
-                    Color.red(color),
-                    Color.green(color),
-                    Color.blue(color)
-                )
-                val initialPressure = event.pressure.coerceIn(0.05f, 1f)
-                val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
-                redoFrames.remove(frame)
-                clearRedoSnapshots.remove(frame)
-                val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
-                current = stroke
-                beginInProgressStroke(point, initialWidth, stroke)
-                invalidate()
+                startInkStroke(event, actionIndex, eraseStroke)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val stroke = current ?: return true
                 for (pointer in 0 until event.pointerCount) {
                     val pointerTool = event.getToolType(pointer)
-                    if (pointerTool != MotionEvent.TOOL_TYPE_STYLUS && pointerTool != MotionEvent.TOOL_TYPE_ERASER) continue
-                    fun appendSample(x: Float, y: Float, rawPressure: Float) {
-                        val pressure = rawPressure.coerceIn(0.05f, 1f)
-                        val point = viewToDrawingPoint(x, y, left, top, boardScale)
-                        if (point.x in 0f..1920f && point.y in 0f..1080f) {
-                            val prior = stroke.points.lastOrNull()
-                            val distance = if (prior == null) 999f else kotlin.math.hypot((point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()).toFloat()
-                            if (distance >= 0.65f) {
-                                val pressureFactor = if (pressureSensitivity) {
-                                    val curved = pressure * pressure
-                                    0.18f + curved * 1.12f
-                                } else 1f
-                                val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
-                                stroke.points.add(point)
-                                stroke.widths.add(nextWidth)
-                                appendInProgressSample(point, nextWidth)
-                            }
-                        }
+                    if (pointerTool == MotionEvent.TOOL_TYPE_STYLUS || pointerTool == MotionEvent.TOOL_TYPE_ERASER) {
+                        addInkSample(event, pointer)
                     }
-                    for (history in 0 until event.historySize) {
-                        appendSample(
-                            event.getHistoricalX(pointer, history),
-                            event.getHistoricalY(pointer, history),
-                            event.getHistoricalPressure(pointer, history)
-                        )
-                    }
-                    appendSample(event.getX(pointer), event.getY(pointer), event.getPressure(pointer))
                 }
                 postInvalidateOnAnimation()
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val completed = current
-                if (completed != null) {
-                    finishInProgressPreview()
-                    // Commit the exact live preview to the frame's sole RGBA bitmap.
-                    // Re-rasterizing the point list here caused a visible shape/width jump
-                    // and a long pause on dense stylus strokes.
-                    commitInProgressBitmap(bitmapFor(frame))
-                    clearInProgressDirtyRegion()
-                    frames.remove(frame)
-                    invalidateFrameCache()
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
+                val pointerTool = event.getToolType(actionIndex)
+                if (pointerTool == MotionEvent.TOOL_TYPE_STYLUS || pointerTool == MotionEvent.TOOL_TYPE_ERASER) {
+                    finishInkStroke(event, actionIndex)
                 }
-                current = null
-                invalidate()
                 parent?.requestDisallowInterceptTouchEvent(false)
-                onChanged?.invoke()
-                onHistoryAction?.invoke()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                for (pointer in 0 until event.pointerCount) cancelInkStroke(event, pointer)
+                parent?.requestDisallowInterceptTouchEvent(false)
                 return true
             }
         }
+
         return true
     }
 
     fun toJson(): JSONObject {
         val root = JSONObject()
+        root.put("formatVersion", 1)
         root.put("brushSize", brush.toDouble())
         root.put("eraserSize", eraserBrush.toDouble())
         root.put("hue", hue.toDouble()); root.put("saturation", saturation.toDouble()); root.put("value", value.toDouble())
@@ -4036,6 +4155,16 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun loadJson(root: JSONObject) {
+        // Refuse older schemas instead of silently migrating legacy strokes or image layers.
+        if (root.optInt("formatVersion", 0) != 1) {
+            clearProject()
+            Toast.makeText(context, "La sesión no pertenece al formato BV'Storyboarder 1.0.0", Toast.LENGTH_LONG).show()
+            return
+        }
+        inkInputView?.cancelUnfinishedStrokes()
+        inkStrokeModes.clear()
+        inkStrokeTargets.clear()
+        inkPointerIds.clear()
         invalidateAllFrameCaches()
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
@@ -4049,72 +4178,62 @@ class DrawingView(context: android.content.Context) : View(context) {
         importedImages.clear()
         encodedImageCache.clear()
         decodedImageCache.clear()
+        selectedPixels?.let { if (!it.isRecycled) it.recycle() }
+        selectedPixels = null
+        selectionOriginalBitmap?.let { if (!it.isRecycled) it.recycle() }
+        selectionOriginalBitmap = null
+        lassoPoints.clear()
+        selectedStrokes.clear()
+        lassoEnabled = false
+
         brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
-        eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
+        eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f, 200f)
         color = root.optInt("brushColor", Color.BLACK)
         if (root.has("hue") && root.has("saturation") && root.has("value")) {
-            hue=root.optDouble("hue",0.0).toFloat(); saturation=root.optDouble("saturation",1.0).toFloat(); value=root.optDouble("value",0.0).toFloat()
+            hue = root.optDouble("hue", 0.0).toFloat()
+            saturation = root.optDouble("saturation", 1.0).toFloat()
+            value = root.optDouble("value", 0.0).toFloat()
         } else {
-            val hsv=FloatArray(3); Color.colorToHSV(color,hsv); hue=hsv[0]; saturation=hsv[1]; value=hsv[2]
+            val hsv = FloatArray(3)
+            Color.colorToHSV(color, hsv)
+            hue = hsv[0]; saturation = hsv[1]; value = hsv[2]
         }
         brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
+
         val array = root.optJSONArray("frames") ?: JSONArray()
         for (i in 0 until array.length()) {
             val frameObject = array.optJSONObject(i) ?: continue
             val index = frameObject.optInt("index", i)
-            val strokeArray = frameObject.optJSONArray("strokes") ?: JSONArray()
-            val loadedStrokes = mutableListOf<Stroke>()
-            for (j in 0 until strokeArray.length()) {
-                val strokeObject = strokeArray.optJSONObject(j) ?: continue
-                val pointArray = strokeObject.optJSONArray("points") ?: JSONArray()
-                val points = mutableListOf<PointF>()
-                val widths = mutableListOf<Float>()
-                for (k in 0 until pointArray.length()) {
-                    val point = pointArray.optJSONObject(k) ?: continue
-                    points.add(PointF(point.optDouble("x").toFloat(), point.optDouble("y").toFloat()))
-                    widths.add(point.optDouble("width", 4.0).toFloat())
-                }
-                if (points.isNotEmpty()) loadedStrokes.add(
-                    Stroke(points, widths, strokeObject.optInt("color", Color.BLACK), strokeObject.optBoolean("erase", false))
-                )
-            }
-            if (loadedStrokes.isNotEmpty()) frames[index] = loadedStrokes
-            val imageData = frameObject.optString("importedImage", "")
-            if (imageData.isNotBlank()) try {
-                val cacheKey = "${imageData.hashCode()}:${imageData.length}"
-                val cached = decodedImageCache[cacheKey]
-                val bitmap = if (cached != null && cached.encoded == imageData && !cached.bitmap.isRecycled) {
-                    cached.bitmap
-                } else {
-                    val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.also {
-                        decodedImageCache[cacheKey] = DecodedImageEntry(imageData, it)
-                    }
-                }
-                if (bitmap != null) importedImages[index] = bitmap
-            } catch (_: Exception) { }
             val bitmapData = frameObject.optString("bitmap", "")
-            if (bitmapData.isNotBlank()) try {
-                val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
-                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (decoded != null) {
-                    val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) decoded else Bitmap.createScaledBitmap(decoded, 1920, 1080, true)
-                    frameBitmaps[index] = normalized
-                    if (normalized !== decoded && !decoded.isRecycled) decoded.recycle()
-                    frames.remove(index)
-                    importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+            if (bitmapData.isNotBlank()) {
+                try {
+                    val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
+                    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (decoded != null) {
+                        val normalized = if (decoded.width == 1920 && decoded.height == 1080 &&
+                            decoded.config == Bitmap.Config.ARGB_8888) {
+                            decoded
+                        } else {
+                            Bitmap.createScaledBitmap(decoded, 1920, 1080, true).also {
+                                if (!decoded.isRecycled) decoded.recycle()
+                            }
+                        }
+                        frameBitmaps[index] = normalized
+                    }
+                } catch (_: Exception) {
+                    // A damaged frame is skipped without preventing the rest of the session from loading.
                 }
-            } catch (_: Exception) { }
-            if (!frameBitmaps.containsKey(index)) bakeLegacyFrame(index)
+            }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
-                noteColors[index] = frameObject.optInt("noteColor", Color.DKGRAY)
+                noteColors[index] = frameObject.optInt("noteColor", Color.RED)
             }
         }
         invalidate()
     }
+
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
