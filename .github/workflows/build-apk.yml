@@ -3,7 +3,9 @@ name: Build BV Storyboarder APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -21,35 +23,35 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # GitHub-hosted Ubuntu runners already include Android command-line tools.
-      # Do not request the obsolete SDK package named "tools".
-      - name: Install Android SDK components
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDKMANAGER="$(find \"${ANDROID_SDK_ROOT:-$ANDROID_HOME}/cmdline-tools\" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found in the installed Android SDK."
-            exit 1
-          fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      - name: Verify build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -version
+          gradle --version
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BV-Storyboarder-1.0.0-debug
+          name: BV-Storyboarder-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
