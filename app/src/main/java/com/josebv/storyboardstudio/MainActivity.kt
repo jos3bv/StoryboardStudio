@@ -268,7 +268,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setMargins(dp(12), dp(2), dp(12), dp(3))
         })
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.87f).apply {
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
             setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(4))
         })
 
@@ -319,11 +319,6 @@ class MainActivity : Activity() {
         }
 
         val toolButtons = mutableListOf<Button>()
-        fun updateActiveTool(button: Button) {
-            // El estado seleccionado no queda iluminado: todos los iconos reposan al 50%.
-            // El 100% se reserva exclusivamente para el instante de pulsación.
-            toolButtons.forEach { item -> item.tag = (item === button) }
-        }
         fun tool(iconName: String, description: String, action: () -> Unit): Button {
             val button = Button(this).apply {
                 text = ""
@@ -346,7 +341,6 @@ class MainActivity : Activity() {
                         selectionActionsView?.visibility = View.GONE
                     }
                     action()
-                    updateActiveTool(this)
                 }
                 setButtonIcon(this, iconName, 40)
             }
@@ -401,7 +395,7 @@ class MainActivity : Activity() {
             selectionActionsView?.visibility = View.VISIBLE
         }
         addToolCell(toolRow2, lassoButton)
-        updateActiveTool(toolButtons.first())
+        toolButtons.forEach { it.compoundDrawables.getOrNull(1)?.alpha = 128 }
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
@@ -773,12 +767,22 @@ class MainActivity : Activity() {
         button.text = ""
         drawable.alpha = 128
         button.setCompoundDrawables(null, drawable, null, null)
+        var iconHovered = false
         var pressReleaseRunnable: Runnable? = null
         fun refreshIconAlpha(alpha: Int) {
             button.compoundDrawables.getOrNull(1)?.alpha = alpha
         }
-        button.setOnHoverListener { _, _ ->
-            // El hover no altera el estado visual solicitado.
+        button.setOnHoverListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                    iconHovered = true
+                    refreshIconAlpha(128)
+                }
+                MotionEvent.ACTION_HOVER_EXIT -> {
+                    iconHovered = false
+                    refreshIconAlpha(128)
+                }
+            }
             false
         }
         button.setOnTouchListener { _, event ->
@@ -788,9 +792,11 @@ class MainActivity : Activity() {
                     refreshIconAlpha(255)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val reset = Runnable { refreshIconAlpha(128) }
+                    val reset = Runnable {
+                        refreshIconAlpha(128)
+                    }
                     pressReleaseRunnable = reset
-                    handler.postDelayed(reset, 100)
+                    handler.postDelayed(reset, 150)
                 }
             }
             false
@@ -2565,8 +2571,8 @@ private class HueSatValPickerView(
 
         val availableTop = hueBar.bottom + 12f * density
         val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
-        val squareWidth = (width - 36f * density).coerceAtLeast(1f)
-        val squareHeight = min(squareWidth * 2.22f, availableHeight).coerceAtLeast(1f)
+        val squareWidth = ((width - 36f * density) * (2f / 3f)).coerceAtLeast(1f)
+        val squareHeight = min(squareWidth * 2.22f, availableHeight * (2f / 3f)).coerceAtLeast(1f)
         val left = (width - squareWidth) / 2f
         square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
         paint.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
@@ -2723,8 +2729,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 3
     }
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
-    private var rasterCanvasBitmap: Bitmap? = null
-    private var rasterCanvas: Canvas? = null
     private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -2782,10 +2786,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun invalidateFrameCache(index: Int = frame) {
         val removed = renderedFrameCache.remove(index)
         if (removed != null) {
-            if (rasterCanvasBitmap === removed) {
-                rasterCanvasBitmap = null
-                rasterCanvas = null
-            }
             if (!removed.isRecycled) removed.recycle()
         }
     }
@@ -2793,8 +2793,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun invalidateAllFrameCaches() {
         renderedFrameCache.values.forEach { if (!it.isRecycled) it.recycle() }
         renderedFrameCache.clear()
-        rasterCanvasBitmap = null
-        rasterCanvas = null
     }
 
     fun releaseCachedBitmaps() {
@@ -2830,41 +2828,6 @@ class DrawingView(context: android.content.Context) : View(context) {
             invalidateFrameCache(oldestKey)
         }
         return bitmap
-    }
-
-    // Paint each incoming stylus segment directly into the cached frame bitmap.
-    // The vector samples remain only as a compatibility/selection representation;
-    // normal rendering uses the already-rasterized bitmap instead of rebuilding paths.
-    private fun drawRasterSegment(
-        bitmap: Bitmap,
-        from: PointF?,
-        to: PointF,
-        width: Float,
-        strokeColor: Int,
-        erase: Boolean
-    ) {
-        if (rasterCanvasBitmap !== bitmap || rasterCanvas == null) {
-            rasterCanvasBitmap = bitmap
-            rasterCanvas = Canvas(bitmap)
-        }
-        val target = rasterCanvas ?: return
-        rasterPaint.color = strokeColor
-        rasterPaint.strokeWidth = width.coerceAtLeast(0.5f) * 2f
-        rasterPaint.xfermode = if (erase) {
-            android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
-        } else {
-            // Replace covered pixels instead of alpha-blending every incoming sample
-            // over the previous one; this keeps brush opacity uniform along the stroke.
-            android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
-        }
-        if (from == null) {
-            target.drawPoint(to.x, to.y, rasterPaint)
-        } else {
-            // Segmentos conectados y con extremos redondeados: sin puntos aislados
-            // ni círculos superpuestos que alteren visualmente la transparencia.
-            target.drawLine(from.x, from.y, to.x, to.y, rasterPaint)
-        }
-        rasterPaint.xfermode = null
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
@@ -3113,6 +3076,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         val layer = canvas.saveLayer(boardBounds, null)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        // Render the in-progress stroke as one smoothed path, not as overlapping
+        // alpha-blended samples. This keeps the selected color and transparency uniform.
+        current?.let { drawStroke(canvas, it) }
         if (selectedStrokes.isNotEmpty()) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
@@ -3365,7 +3331,36 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun drawStroke(canvas: Canvas, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
-        if (stroke.erase && stroke.points.size < 2) return
+        if (stroke.erase) {
+            drawStrokeRaw(canvas, stroke)
+            return
+        }
+        val alpha = Color.alpha(stroke.color)
+        if (alpha >= 255) {
+            drawStrokeRaw(canvas, stroke)
+            return
+        }
+        // Render all connected samples opaque into one temporary layer, then apply
+        // the requested transparency once to the completed stroke. This prevents
+        // joins and dense samples from becoming darker/greyer than the chosen color.
+        val opaqueStroke = stroke.copy(color = Color.rgb(
+            Color.red(stroke.color), Color.green(stroke.color), Color.blue(stroke.color)
+        ))
+        val padding = (stroke.widths.maxOrNull() ?: 4f) * 2f + 4f
+        val layerBounds = RectF(
+            (stroke.points.minOf { it.x } - padding).coerceAtLeast(0f),
+            (stroke.points.minOf { it.y } - padding).coerceAtLeast(0f),
+            (stroke.points.maxOf { it.x } + padding).coerceAtMost(1920f),
+            (stroke.points.maxOf { it.y } + padding).coerceAtMost(1080f)
+        )
+        val layer = canvas.saveLayer(layerBounds, null)
+        drawStrokeRaw(canvas, opaqueStroke)
+        val alphaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = alpha }
+        canvas.restoreToCount(layer, alphaPaint)
+    }
+
+    private fun drawStrokeRaw(canvas: Canvas, stroke: Stroke) {
+        if (stroke.points.isEmpty()) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
@@ -3564,10 +3559,8 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
                 redoFrames.remove(frame)
                 clearRedoSnapshots.remove(frame)
-                val raster = cachedFrameBitmap()
                 current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 strokes().add(current!!)
-                drawRasterSegment(raster, null, point, initialWidth, strokeColor, eraseStroke)
                 invalidate()
                 return true
             }
@@ -3588,9 +3581,6 @@ class DrawingView(context: android.content.Context) : View(context) {
                                     0.18f + curved * 1.12f
                                 } else 1f
                                 val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
-                                drawRasterSegment(cachedFrameBitmap(), prior, point,
-                                    ((stroke.widths.lastOrNull() ?: nextWidth) + nextWidth) * 0.5f,
-                                    stroke.color, stroke.erase)
                                 stroke.points.add(point)
                                 stroke.widths.add(nextWidth)
                             }
@@ -3610,6 +3600,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 current = null
+                invalidateFrameCache()
                 invalidate()
                 onChanged?.invoke()
                 onHistoryAction?.invoke()

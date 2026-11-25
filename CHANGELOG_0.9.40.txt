@@ -1,9 +1,11 @@
 BV'Storyboarder 0.9.40
 
-Cambios solicitados:
-- Lápiz: conserva el color RGB elegido y utiliza la opacidad exclusivamente como canal alfa/transparencia. Los segmentos del trazo se conectan con extremos redondeados y se eliminan los círculos superpuestos entre muestras para evitar acumulaciones visuales.
-- Botones del panel: todos los iconos parten al 50% de opacidad (alfa 128), suben al 100% mientras se pulsan y vuelven al 50% al soltar. La herramienta seleccionada ya no queda permanentemente resaltada.
-- Timeline: se aumenta el padding superior de los botones con icono a 8dp.
-- Selector de color: se reduce el espacio vertical asignado al selector grande a dos tercios del anterior.
+Cambios:
+- Lápiz: se eliminó la rasterización incremental por segmentos superpuestos. El trazo en curso se dibuja como un único recorrido vectorial suavizado y se incorpora a la caché al terminar. La transparencia se aplica una sola vez al trazo completo, conservando el color RGB seleccionado.
+- Botones con icono: estado normal y hover al 50% de opacidad; durante la pulsación alcanzan el 100%. Se eliminó el resaltado persistente de la herramienta seleccionada.
+- Barra de herramientas de la timeline: padding superior de 8 dp en los botones con iconos.
+- Selector HSV: el rectángulo grande de saturación/valor se redujo a aproximadamente dos tercios de su ancho y alto anteriores; la barra de tono conserva su ancho.
+- versionCode 51 / versionName 0.9.40.
 
-Versión: 0.9.40 (versionCode 51).
+Validaciones realizadas: integridad del ZIP, estructura de archivos y sintaxis XML de recursos.
+No se ejecutó una compilación Android/Gradle en este entorno.
