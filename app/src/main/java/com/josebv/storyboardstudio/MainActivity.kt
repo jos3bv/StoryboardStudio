@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.38 - incremental release based on 0.9.37.
+// BV'Storyboarder 0.9.39 - repository cleanup release based on 0.9.38.
 
 import android.app.Activity
 import android.app.AlertDialog
