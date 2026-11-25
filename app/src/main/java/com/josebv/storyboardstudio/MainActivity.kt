@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.39 - repository cleanup release based on 0.9.38.
+// BV'Storyboarder 0.9.40 - restored original add-shot SVG asset with a valid UTF-8 filename.
 
 import android.app.Activity
 import android.app.AlertDialog
