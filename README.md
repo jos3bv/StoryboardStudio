@@ -1,7 +1,9 @@
-# BV'Storyboarder 0.9.42
+# BV'Storyboarder 0.9.43
 
-Primera optimización del motor de dibujo para trazos largos: rasterización de la trayectoria suavizada con muestreo espacial constante y presión interpolada según distancia recorrida. Se conserva el almacenamiento actual de trazos para no romper historial, selección, guardado ni sesiones.
+Código fuente Android completo.
 
-Ver `CHANGELOG_0.9.42.txt` para el detalle.
+Cambios de esta versión: historial limitado a tres pasos y acotado al lienzo/línea de tiempo; preservación de ajustes de herramientas al deshacer/rehacer; límites de caché y liberación de bitmaps; armonización de los tres primeros bloques del panel izquierdo; estado visual persistente para lápiz/goma/guillotina; padding superior de 3 dp en botones de la barra de línea de tiempo; separadores en el encabezado.
 
-Android: `versionCode 53`, `versionName 0.9.42`.
+Consulta `CHANGELOG_0.9.43.txt` para el detalle.
+
+Compilación: sigue las instrucciones de `COMPILAR_APK_PASO_A_PASO.txt`.

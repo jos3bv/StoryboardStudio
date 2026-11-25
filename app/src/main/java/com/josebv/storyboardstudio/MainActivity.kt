@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.39 - pencil rendering, opacity consistency and timeline toolbar alignment.
+// BV'Storyboarder 0.9.43 - scoped history, memory limits and interface refinements.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -69,6 +69,9 @@ class MainActivity : Activity() {
     private var audioDurationMs = 0
     private var audioActionButton: View? = null
     private var cutModeButton: Button? = null
+    private var activeToolButton: Button? = null
+    private var pencilToolButton: Button? = null
+    private var eraserToolButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -86,7 +89,7 @@ class MainActivity : Activity() {
     private val redoHistory = ArrayDeque<String>()
     private var restoringHistory = false
     private var lastHistoryState: String? = null
-    private val maxHistorySteps = 10
+    private val maxHistorySteps = 3
 
     private val handler = Handler(Looper.getMainLooper())
     private val playbackUpdater = object : Runnable {
@@ -190,13 +193,23 @@ class MainActivity : Activity() {
             button.setPadding(dp(1), 0, dp(1), 0)
             button.maxLines = 1
         }
+        fun headerDivider() {
+            top.addView(View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) },
+                LinearLayout.LayoutParams(dp(1), dp(24)).apply { setMargins(dp(2), 0, dp(2), 0) })
+        }
         headerAction("Nueva", 52, ::confirmNewSession)
+        headerDivider()
         headerAction("Abrir sesión", 70, ::openSessionFile)
+        headerDivider()
         headerAction("Abrir", 48, ::showLocalSessionsDialog)
+        headerDivider()
         headerAction("Guardar como", 76, ::saveSessionAsFile)
+        headerDivider()
         headerAction("Guardar copia", 80, ::saveLocalSnapshot)
+        headerDivider()
         val saveHeaderButton = addHeaderButton(top, "Guardar", dp(60)) { saveProject() }
         saveHeaderButton.textSize = 10f
+        headerDivider()
         projectTitleLabel = TextView(this).apply {
             text = projectName
             setTextColor(Color.WHITE)
@@ -245,13 +258,14 @@ class MainActivity : Activity() {
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(dp(3), dp(2), dp(3), dp(2))
+            setPadding(dp(8), dp(2), dp(8), dp(2))
         }
 
         val picker = HueSatValPickerView(
             this, drawing.currentHue(), drawing.currentSaturation() / 100f, drawing.currentValue() / 100f
         ) { h, sat, v ->
             drawing.setColorFromHsv(h, sat, v)
+            updateActiveToolButton(false)
             updateSelectedColorIndicator()
             scheduleAutosave()
         }
@@ -266,16 +280,16 @@ class MainActivity : Activity() {
         }
         sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(24)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            setMargins(dp(12), dp(2), dp(12), dp(3))
+            setMargins(0, dp(2), 0, dp(3))
         })
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
-            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(4))
+            setMargins(0, dp(0.25f), 0, dp(4))
         })
 
         val swatchWrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // Match the horizontal inset of the hue bar inside HueSatValPickerView.
-            setPadding(dp(12), dp(0), dp(12), dp(6))
+            setPadding(0, 0, 0, 0)
         }
         recentColorContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -293,6 +307,7 @@ class MainActivity : Activity() {
                 setBackgroundColor(color)
                 setOnClickListener {
                     drawing.setColor(color)
+                    updateActiveToolButton(false)
                     picker.setColor(color)
                     updateSelectedColorIndicator()
                     scheduleAutosave()
@@ -304,7 +319,7 @@ class MainActivity : Activity() {
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
         sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)).apply {
-            setMargins(0, 0, 0, dp(8))
+            setMargins(0, 0, 0, dp(2))
         })
         refreshRecentColorSwatches()
 
@@ -341,6 +356,9 @@ class MainActivity : Activity() {
                         selectionActionsView?.visibility = View.GONE
                     }
                     action()
+                    if (description == "Lápiz" || description == "Goma") {
+                        updateActiveToolButton(description == "Goma")
+                    }
                 }
                 setButtonIcon(this, iconName, 40)
             }
@@ -370,14 +388,16 @@ class MainActivity : Activity() {
             })
         }
 
-        addToolCell(toolRow1, tool("ic_pencil", "Lápiz") {
+        pencilToolButton = tool("ic_pencil", "Lápiz") {
             drawing.setEraser(false)
             brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
-        })
-        addToolCell(toolRow1, tool("ic_eraser", "Goma") {
+        }
+        addToolCell(toolRow1, pencilToolButton!!)
+        eraserToolButton = tool("ic_eraser", "Goma") {
             drawing.setEraser(true)
             brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
-        })
+        }
+        addToolCell(toolRow1, eraserToolButton!!)
         addToolCell(toolRow1, tool("ic_text", "Texto") { addTextNote() })
 
         addToolCell(toolRow2, tool("ic_pressure", "Presión del lápiz") {
@@ -395,7 +415,11 @@ class MainActivity : Activity() {
             selectionActionsView?.visibility = View.VISIBLE
         }
         addToolCell(toolRow2, lassoButton)
-        toolButtons.forEach { it.compoundDrawables.getOrNull(1)?.alpha = 128 }
+        toolButtons.forEach { button ->
+            button.tag = false
+            button.compoundDrawables.getOrNull(1)?.alpha = 128
+        }
+        updateActiveToolButton(false)
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
@@ -671,7 +695,7 @@ class MainActivity : Activity() {
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
                 if (child is Button) {
-                    child.setPadding(0, 0, 0, 0)
+                    child.setPadding(0, dp(3), 0, 0)
                     child.gravity = Gravity.CENTER
                     child.translationY = 0f
                 }
@@ -776,11 +800,11 @@ class MainActivity : Activity() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                     iconHovered = true
-                    refreshIconAlpha(128)
+                    refreshIconAlpha(if (button.tag == true) 255 else 128)
                 }
                 MotionEvent.ACTION_HOVER_EXIT -> {
                     iconHovered = false
-                    refreshIconAlpha(128)
+                    refreshIconAlpha(if (button.tag == true) 255 else 128)
                 }
             }
             false
@@ -793,7 +817,7 @@ class MainActivity : Activity() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val reset = Runnable {
-                        refreshIconAlpha(128)
+                        refreshIconAlpha(if (button.tag == true) 255 else 128)
                     }
                     pressReleaseRunnable = reset
                     handler.postDelayed(reset, 150)
@@ -897,6 +921,16 @@ class MainActivity : Activity() {
         refreshRecentColorSwatches()
     }
 
+    private fun updateActiveToolButton(eraserActive: Boolean = drawing.isEraser()) {
+        activeToolButton = if (eraserActive) eraserToolButton else pencilToolButton
+        listOf(pencilToolButton, eraserToolButton).forEach { button ->
+            button ?: return@forEach
+            val selected = button === activeToolButton
+            button.tag = selected
+            button.compoundDrawables.getOrNull(1)?.alpha = if (selected) 255 else 128
+        }
+    }
+
     private fun updateSelectedColorIndicator() {
         val indicator = selectedColorIndicator ?: return
         indicator.background = android.graphics.drawable.GradientDrawable().apply {
@@ -916,6 +950,7 @@ class MainActivity : Activity() {
                 setBackgroundColor(color)
                 setOnClickListener {
                     drawing.setColor(color)
+                    updateActiveToolButton(false)
                     inlineColorPicker?.setColor(color)
                     updateSelectedColorIndicator()
                     scheduleAutosave()
@@ -1045,12 +1080,18 @@ class MainActivity : Activity() {
         if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
+    // Undo/redo stores only editable canvas content and timeline structure.
+    // Tool settings, active tools, selected colors, project name and audio are intentionally excluded.
     private fun historySnapshot(): String {
-        val snapshot = buildSessionJson()
-        snapshot.optJSONObject("drawing")?.let { drawingState ->
-            listOf("brushSize", "eraserSize", "hue", "saturation", "value",
-                "brushColor", "brushOpacity", "pressureSensitivity").forEach { drawingState.remove(it) }
-        }
+        val drawingState = drawing.toJson()
+        listOf("brushSize", "eraserSize", "hue", "saturation", "value",
+            "brushColor", "brushOpacity", "pressureSensitivity").forEach { drawingState.remove(it) }
+        val snapshot = JSONObject()
+        snapshot.put("currentFrame", currentFrame)
+        val durations = JSONArray()
+        frameDurations.forEach { durations.put(it) }
+        snapshot.put("durations", durations)
+        snapshot.put("drawing", drawingState)
         return snapshot.toString()
     }
 
@@ -1078,21 +1119,38 @@ class MainActivity : Activity() {
     private fun restoreHistoryState(state: String) {
         restoringHistory = true
         try {
+            val snapshot = JSONObject(state)
             val preservedColor = drawing.currentColor()
             val preservedSize = drawing.activeBrushSize()
+            val preservedPencilSize = drawing.pencilToolSize()
+            val preservedEraserSize = drawing.eraserToolSize()
             val preservedEraser = drawing.isEraser()
             val preservedOpacity = drawing.brushOpacity()
             val preservedPressure = drawing.pressureEnabled()
-            applySessionJson(JSONObject(state))
+            frameDurations.clear()
+            val durations = snapshot.optJSONArray("durations")
+            if (durations != null && durations.length() > 0) {
+                for (i in 0 until durations.length()) {
+                    frameDurations.add(durations.optInt(i, 3000).coerceAtLeast(100))
+                }
+            } else frameDurations.add(3000)
+            drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject())
+            drawing.setEraser(false)
+            drawing.setActiveBrushSize(preservedPencilSize)
+            drawing.setEraser(true)
+            drawing.setActiveBrushSize(preservedEraserSize)
+            drawing.setEraser(preservedEraser)
             drawing.setColor(preservedColor)
             drawing.setEraser(preservedEraser)
+            updateActiveToolButton(preservedEraser)
             drawing.configureBrush(preservedSize, preservedOpacity * 255 / 100, preservedPressure)
+            currentFrame = snapshot.optInt("currentFrame", currentFrame).coerceIn(0, frameDurations.lastIndex)
+            drawing.setFrame(currentFrame)
             inlineColorPicker?.setColor(preservedColor)
             updateSelectedColorIndicator()
             updateFrameStatus()
             updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
-            drawing.setFrame(currentFrame)
             lastHistoryState = historySnapshot()
             scheduleAutosave()
         } finally {
@@ -2726,7 +2784,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     // large PNG/Base64 payload on every restoration.
     private data class DecodedImageEntry(val encoded: String, val bitmap: Bitmap)
     private val decodedImageCache = object : LinkedHashMap<String, DecodedImageEntry>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 3
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 1
     }
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
     private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
@@ -2852,6 +2910,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun setEraser(value: Boolean) { eraser = value }
     fun isEraser(): Boolean = eraser
     fun activeBrushSize(): Float = if (eraser) eraserBrush else brush
+    fun pencilToolSize(): Float = brush
+    fun eraserToolSize(): Float = eraserBrush
     fun setActiveBrushSize(size: Float) { if (eraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
     fun setColor(value: Int) { color = value; eraser = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
     fun currentColor(): Int = Color.HSVToColor(floatArrayOf(hue,saturation,value))
@@ -2885,7 +2945,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         val list = strokes()
         if (list.isNotEmpty()) {
             val removed = list.removeAt(list.lastIndex)
-            redoFrames.getOrPut(frame) { mutableListOf() }.add(removed)
+            val redoStack = redoFrames.getOrPut(frame) { mutableListOf() }
+            redoStack.add(removed)
+            while (redoStack.size > 3) redoStack.removeAt(0)
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
@@ -2898,7 +2960,9 @@ class DrawingView(context: android.content.Context) : View(context) {
             frames[frame] = snapshot.strokes.toMutableList()
             if (snapshot.image != null) importedImages[frame] = snapshot.image
             else importedImages.remove(frame)
-            clearRedoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+            val clearRedo = clearRedoSnapshots.getOrPut(frame) { mutableListOf() }
+            clearRedo.add(snapshot)
+            while (clearRedo.size > 3) clearRedo.removeAt(0)
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
@@ -2918,7 +2982,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         val clearStack = clearRedoSnapshots[frame]
         if (!clearStack.isNullOrEmpty()) {
             val snapshot = clearStack.removeAt(clearStack.lastIndex)
-            clearUndoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+            val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
+            clearUndo.add(snapshot)
+            while (clearUndo.size > 3) clearUndo.removeAt(0)
             frames.remove(frame)
             importedImages.remove(frame)
             invalidateFrameCache()
@@ -2933,7 +2999,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (existingStrokes.isEmpty() && existingImage == null) return
 
         val snapshot = ClearSnapshot(existingStrokes.toList(), existingImage)
-        clearUndoSnapshots.getOrPut(frame) { mutableListOf() }.add(snapshot)
+        val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
+        clearUndo.add(snapshot)
+        while (clearUndo.size > 3) clearUndo.removeAt(0)
         clearRedoSnapshots.remove(frame)
 
         frames.remove(frame)
