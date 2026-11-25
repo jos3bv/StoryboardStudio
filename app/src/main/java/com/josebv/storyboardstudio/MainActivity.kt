@@ -3393,31 +3393,70 @@ class DrawingView(context: android.content.Context) : View(context) {
             lineTo(last.x, last.y)
         }
 
-        // Sample the smoothed path and interpolate pressure width along it.
+        // Resample the smoothed centerline at a fixed spatial interval. The old
+        // implementation capped every stroke at 420 samples and spaced those
+        // samples farther apart as the stroke grew, which produced visible angular
+        // corners on long strokes. A fixed interval keeps curvature resolution
+        // independent of total stroke length.
         val measure = PathMeasure(smoothed, false)
         val length = measure.length
-        val samples = max(2, min(420, (length / 7f).toInt() + 1))
+        if (!length.isFinite() || length <= 0.001f) {
+            val point = stroke.points.last()
+            canvas.drawCircle(point.x, point.y, baseWidth * 0.5f, fillPaint)
+            return
+        }
+
+        // Width samples are associated with input positions, which are not
+        // guaranteed to be evenly spaced. Build cumulative input distance so
+        // pressure is interpolated by travelled distance rather than point index.
+        val cumulativeInputDistance = FloatArray(stroke.points.size)
+        for (i in 1 until stroke.points.size) {
+            val a = stroke.points[i - 1]
+            val b = stroke.points[i]
+            val segmentLength = kotlin.math.hypot(
+                (b.x - a.x).toDouble(), (b.y - a.y).toDouble()
+            ).toFloat()
+            cumulativeInputDistance[i] = cumulativeInputDistance[i - 1] + segmentLength
+        }
+        val inputLength = cumulativeInputDistance.last().coerceAtLeast(0.001f)
+
+        fun widthAtPathDistance(pathDistance: Float): Float {
+            val targetDistance = (pathDistance / length).coerceIn(0f, 1f) * inputLength
+            var low = 0
+            var high = cumulativeInputDistance.lastIndex
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (cumulativeInputDistance[mid] < targetDistance) low = mid + 1 else high = mid
+            }
+            val upper = low.coerceIn(0, stroke.points.lastIndex)
+            val lower = (upper - 1).coerceAtLeast(0)
+            val span = cumulativeInputDistance[upper] - cumulativeInputDistance[lower]
+            val fraction = if (span > 0.0001f) {
+                ((targetDistance - cumulativeInputDistance[lower]) / span).coerceIn(0f, 1f)
+            } else 0f
+            val w0 = stroke.widths.getOrElse(lower) { 4f }
+            val w1 = stroke.widths.getOrElse(upper) { w0 }
+            return (w0 + (w1 - w0) * fraction).coerceAtLeast(0.5f) * 2f
+        }
+
+        // 2 drawing units between render samples gives smooth curves even on
+        // very long strokes. There is deliberately no fixed 420-point ceiling.
+        val sampleCount = kotlin.math.ceil(length / 2f).toInt().coerceAtLeast(1)
         val position = FloatArray(2)
         val tangent = FloatArray(2)
         var previousPoint: PointF? = null
-        var previousWidth = baseWidth
-        for (sample in 0..samples) {
-            val distance = length * sample / samples
-            measure.getPosTan(distance, position, tangent)
+        var previousWidth = widthAtPathDistance(0f)
+        for (sample in 0..sampleCount) {
+            val distance = if (sample == sampleCount) length else length * sample / sampleCount
+            if (!measure.getPosTan(distance, position, tangent)) continue
             val point = PointF(position[0], position[1])
-            val ratio = if (samples == 0) 0f else sample.toFloat() / samples
-            val rawIndex = ratio * (stroke.points.size - 1)
-            val lower = rawIndex.toInt().coerceIn(0, stroke.points.lastIndex)
-            val upper = (lower + 1).coerceAtMost(stroke.points.lastIndex)
-            val fraction = rawIndex - lower
-            val w0 = stroke.widths.getOrElse(lower) { 4f }
-            val w1 = stroke.widths.getOrElse(upper) { w0 }
-            val width = ((w0 + (w1 - w0) * fraction).coerceAtLeast(0.5f)) * 2f
+            val width = widthAtPathDistance(distance)
             val previous = previousPoint
             if (previous != null) {
                 paint.strokeWidth = (previousWidth + width) * 0.5f
                 canvas.drawLine(previous.x, previous.y, point.x, point.y, paint)
             } else {
+                fillPaint.strokeWidth = width
                 canvas.drawCircle(point.x, point.y, width * 0.5f, fillPaint)
             }
             previousPoint = point
