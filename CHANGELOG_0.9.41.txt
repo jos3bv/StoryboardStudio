@@ -1,0 +1,6 @@
+BV'Storyboarder 0.9.41
+
+Corrección de compilación: el Paint de composición con alfa ahora se entrega a Canvas.saveLayer(), y restoreToCount() recibe únicamente el identificador de guardado. Se mantiene la aplicación de transparencia una sola vez sobre el trazo completo.
+
+versionCode: 52
+versionName: 0.9.41

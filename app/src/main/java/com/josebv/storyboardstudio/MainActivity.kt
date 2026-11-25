@@ -3353,10 +3353,12 @@ class DrawingView(context: android.content.Context) : View(context) {
             (stroke.points.maxOf { it.x } + padding).coerceAtMost(1920f),
             (stroke.points.maxOf { it.y } + padding).coerceAtMost(1080f)
         )
-        val layer = canvas.saveLayer(layerBounds, null)
-        drawStrokeRaw(canvas, opaqueStroke)
         val alphaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = alpha }
-        canvas.restoreToCount(layer, alphaPaint)
+        // The compositing paint belongs to saveLayer; restoreToCount only accepts
+        // the save count. Alpha is applied once to the completed stroke layer.
+        val layer = canvas.saveLayer(layerBounds, alphaPaint)
+        drawStrokeRaw(canvas, opaqueStroke)
+        canvas.restoreToCount(layer)
     }
 
     private fun drawStrokeRaw(canvas: Canvas, stroke: Stroke) {
