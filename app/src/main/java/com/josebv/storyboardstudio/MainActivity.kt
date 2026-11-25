@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.37 - 14 requested interface and drawing updates based on 0.9.36.
+// BV'Storyboarder 0.9.38 - raster drawing and memory/history optimizations based on 0.9.37.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -156,8 +156,10 @@ class MainActivity : Activity() {
     private fun buildInterface() {
         drawing = DrawingView(this).apply {
             onChanged = {
-                if (!restoringHistory) recordHistory()
                 scheduleAutosave()
+            }
+            onHistoryAction = {
+                if (!restoringHistory) recordHistory()
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
         }
@@ -262,12 +264,12 @@ class MainActivity : Activity() {
             }
             contentDescription = "Color seleccionado"
         }
-        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(dp(30), dp(12)).apply {
+        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(24)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            setMargins(0, dp(2), 0, dp(2))
+            setMargins(dp(12), dp(2), dp(12), dp(3))
         })
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 4.0f).apply {
-            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(10))
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
+            setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(4))
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -451,7 +453,7 @@ class MainActivity : Activity() {
         sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(40)))
 
         val exportSpacer = View(this)
-        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.1f))
+        sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.35f))
         val exportLabel = TextView(this).apply {
             text = "Exportar"
             setTextColor(Color.LTGRAY)
@@ -562,7 +564,10 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
-                setMargins(0, 0, 0, 0)
+                leftMargin = -dp(6)
+                topMargin = 0
+                rightMargin = 0
+                bottomMargin = 0
             }
         )
         val centerButton = Button(this).apply {
@@ -822,6 +827,7 @@ class MainActivity : Activity() {
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp, transparent = true)
+        button.setPadding(0, dp(3), 0, 0)
         button.isClickable = true
         return button
     }
@@ -1042,7 +1048,14 @@ class MainActivity : Activity() {
         if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
-    private fun historySnapshot(): String = buildSessionJson().toString()
+    private fun historySnapshot(): String {
+        val snapshot = buildSessionJson()
+        snapshot.optJSONObject("drawing")?.let { drawingState ->
+            listOf("brushSize", "eraserSize", "hue", "saturation", "value",
+                "brushColor", "brushOpacity", "pressureSensitivity").forEach { drawingState.remove(it) }
+        }
+        return snapshot.toString()
+    }
 
     private fun resetHistory() {
         undoHistory.clear()
@@ -1068,7 +1081,17 @@ class MainActivity : Activity() {
     private fun restoreHistoryState(state: String) {
         restoringHistory = true
         try {
+            val preservedColor = drawing.currentColor()
+            val preservedSize = drawing.activeBrushSize()
+            val preservedEraser = drawing.isEraser()
+            val preservedOpacity = drawing.brushOpacity()
+            val preservedPressure = drawing.pressureEnabled()
             applySessionJson(JSONObject(state))
+            drawing.setColor(preservedColor)
+            drawing.setEraser(preservedEraser)
+            drawing.configureBrush(preservedSize, preservedOpacity * 255 / 100, preservedPressure)
+            inlineColorPicker?.setColor(preservedColor)
+            updateSelectedColorIndicator()
             updateFrameStatus()
             updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
@@ -1773,7 +1796,7 @@ class MainActivity : Activity() {
             }
             val base = projectName.trim().ifBlank { "Storyboard" }
                 .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]"), "_")
-            val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val stamp = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.US).format(java.util.Date())
             val file = File(sessionsDirectory, "${base}_$stamp.sbd")
             file.writeText(buildSessionJson().toString(2))
             setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
@@ -1796,9 +1819,7 @@ class MainActivity : Activity() {
             return
         }
         val labels = files.map { file ->
-            val date = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
-                .format(java.util.Date(file.lastModified()))
-            "${file.nameWithoutExtension}\n$date"
+            file.nameWithoutExtension
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Abrir sesión")
@@ -2017,6 +2038,14 @@ class MainActivity : Activity() {
         return String.format(java.util.Locale.US, "%.2f s", seconds)
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::drawing.isInitialized && level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            drawing.releaseCachedBitmaps()
+            drawing.invalidate()
+        }
+    }
+
     override fun onPause() {
         saveSession(showMessage = false)
         super.onPause()
@@ -2024,6 +2053,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         saveSession(showMessage = false)
+        if (::drawing.isInitialized) drawing.releaseCachedBitmaps()
         stopPlayback()
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
@@ -2680,6 +2710,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     var onChanged: (() -> Unit)? = null
+    var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     private val redoFrames = mutableMapOf<Int, MutableList<Stroke>>()
@@ -2701,6 +2732,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 3
     }
     private val renderedFrameCache = linkedMapOf<Int, Bitmap>()
+    private var rasterCanvasBitmap: Bitmap? = null
+    private var rasterCanvas: Canvas? = null
+    private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
     private var hue = 0f
     private var saturation = 1f
     private var value = 0f
@@ -2751,12 +2789,27 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun invalidateFrameCache(index: Int = frame) {
-        renderedFrameCache.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+        val removed = renderedFrameCache.remove(index)
+        if (removed != null) {
+            if (rasterCanvasBitmap === removed) {
+                rasterCanvasBitmap = null
+                rasterCanvas = null
+            }
+            if (!removed.isRecycled) removed.recycle()
+        }
     }
 
     private fun invalidateAllFrameCaches() {
         renderedFrameCache.values.forEach { if (!it.isRecycled) it.recycle() }
         renderedFrameCache.clear()
+        rasterCanvasBitmap = null
+        rasterCanvas = null
+    }
+
+    fun releaseCachedBitmaps() {
+        invalidateAllFrameCaches()
+        encodedImageCache.clear()
+        decodedImageCache.clear()
     }
 
     private fun cachedFrameBitmap(): Bitmap {
@@ -2781,11 +2834,37 @@ class DrawingView(context: android.content.Context) : View(context) {
             textPaint.color = Color.DKGRAY
         }
         renderedFrameCache[frame] = bitmap
-        while (renderedFrameCache.size > 3) {
+        while (renderedFrameCache.size > 2) {
             val oldestKey = renderedFrameCache.keys.first()
             invalidateFrameCache(oldestKey)
         }
         return bitmap
+    }
+
+    // Paint each incoming stylus segment directly into the cached frame bitmap.
+    // The vector samples remain only as a compatibility/selection representation;
+    // normal rendering uses the already-rasterized bitmap instead of rebuilding paths.
+    private fun drawRasterSegment(
+        bitmap: Bitmap,
+        from: PointF?,
+        to: PointF,
+        width: Float,
+        strokeColor: Int,
+        erase: Boolean
+    ) {
+        if (rasterCanvasBitmap !== bitmap || rasterCanvas == null) {
+            rasterCanvasBitmap = bitmap
+            rasterCanvas = Canvas(bitmap)
+        }
+        val target = rasterCanvas ?: return
+        rasterPaint.color = strokeColor
+        rasterPaint.strokeWidth = width.coerceAtLeast(0.5f) * 2f
+        rasterPaint.xfermode = if (erase) {
+            android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        } else null
+        if (from == null) target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
+        else target.drawLine(from.x, from.y, to.x, to.y, rasterPaint)
+        rasterPaint.xfermode = null
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
@@ -2797,7 +2876,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         clearRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
+        importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
         importedImages.clear()
+        encodedImageCache.clear()
+        decodedImageCache.clear()
         invalidateAllFrameCaches()
         current = null
         cancelSelection()
@@ -2821,7 +2903,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
         val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
         val fitted=Bitmap.createScaledBitmap(bitmap,w,h,true)
-        importedImages.put(frame,fitted); invalidateFrameCache(); invalidate(); onChanged?.invoke()
+        importedImages.put(frame,fitted)?.let { previous ->
+            if (previous !== fitted && !previous.isRecycled) previous.recycle()
+        }
+        invalidateFrameCache(); invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100 / 255).coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
@@ -2893,6 +2978,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
+        onHistoryAction?.invoke()
     }
 
     fun currentNote(): String = notes[frame]?.firstOrNull().orEmpty()
@@ -2908,6 +2994,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
+        onHistoryAction?.invoke()
     }
 
     fun duplicateFrame(source: Int, target: Int) {
@@ -3024,7 +3111,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         val layer = canvas.saveLayer(boardBounds, null)
         canvas.drawBitmap(cachedFrameBitmap(), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-        current?.let { drawStroke(canvas, it) }
         if (selectedStrokes.isNotEmpty()) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
@@ -3113,6 +3199,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
+        onHistoryAction?.invoke()
     }
 
     fun cancelSelection() {
@@ -3475,8 +3562,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
                 redoFrames.remove(frame)
                 clearRedoSnapshots.remove(frame)
+                val raster = cachedFrameBitmap()
                 current = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 strokes().add(current!!)
+                drawRasterSegment(raster, null, point, initialWidth, strokeColor, eraseStroke)
                 invalidate()
                 return true
             }
@@ -3492,12 +3581,16 @@ class DrawingView(context: android.content.Context) : View(context) {
                             val prior = stroke.points.lastOrNull()
                             val distance = if (prior == null) 999f else kotlin.math.hypot((point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()).toFloat()
                             if (distance >= 0.35f) {
-                                stroke.points.add(point)
                                 val pressureFactor = if (pressureSensitivity) {
                                     val curved = pressure * pressure
                                     0.18f + curved * 1.12f
                                 } else 1f
-                                stroke.widths.add((activeBrushSize() * pressureFactor).coerceAtLeast(0.5f))
+                                val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
+                                drawRasterSegment(cachedFrameBitmap(), prior, point,
+                                    ((stroke.widths.lastOrNull() ?: nextWidth) + nextWidth) * 0.5f,
+                                    stroke.color, stroke.erase)
+                                stroke.points.add(point)
+                                stroke.widths.add(nextWidth)
                             }
                         }
                     }
@@ -3515,9 +3608,9 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 current = null
-                invalidateFrameCache()
                 invalidate()
                 onChanged?.invoke()
+                onHistoryAction?.invoke()
                 return true
             }
         }
@@ -3582,7 +3675,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         clearRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
+        importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
         importedImages.clear()
+        encodedImageCache.clear()
+        decodedImageCache.clear()
         brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
         eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
         color = root.optInt("brushColor", Color.BLACK)
