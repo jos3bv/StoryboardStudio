@@ -268,7 +268,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setMargins(dp(12), dp(2), dp(12), dp(3))
         })
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 1.87f).apply {
             setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(4))
         })
 
@@ -320,10 +320,9 @@ class MainActivity : Activity() {
 
         val toolButtons = mutableListOf<Button>()
         fun updateActiveTool(button: Button) {
-            toolButtons.forEach { item ->
-                item.tag = (item === button)
-                item.compoundDrawables.getOrNull(1)?.alpha = if (item === button) 255 else 128
-            }
+            // El estado seleccionado no queda iluminado: todos los iconos reposan al 50%.
+            // El 100% se reserva exclusivamente para el instante de pulsación.
+            toolButtons.forEach { item -> item.tag = (item === button) }
         }
         fun tool(iconName: String, description: String, action: () -> Unit): Button {
             val button = Button(this).apply {
@@ -772,24 +771,14 @@ class MainActivity : Activity() {
         val size = dp(sizeDp)
         drawable.setBounds(0, 0, size, size)
         button.text = ""
-        drawable.alpha = 191
+        drawable.alpha = 128
         button.setCompoundDrawables(null, drawable, null, null)
-        var iconHovered = false
         var pressReleaseRunnable: Runnable? = null
         fun refreshIconAlpha(alpha: Int) {
             button.compoundDrawables.getOrNull(1)?.alpha = alpha
         }
-        button.setOnHoverListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
-                    iconHovered = true
-                    refreshIconAlpha(230)
-                }
-                MotionEvent.ACTION_HOVER_EXIT -> {
-                    iconHovered = false
-                    refreshIconAlpha(if (button.tag == true) 255 else if (button.tag == false) 128 else 191)
-                }
-            }
+        button.setOnHoverListener { _, _ ->
+            // El hover no altera el estado visual solicitado.
             false
         }
         button.setOnTouchListener { _, event ->
@@ -799,11 +788,9 @@ class MainActivity : Activity() {
                     refreshIconAlpha(255)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val reset = Runnable {
-                        refreshIconAlpha(if (iconHovered) 230 else if (button.tag == true) 255 else if (button.tag == false) 128 else 191)
-                    }
+                    val reset = Runnable { refreshIconAlpha(128) }
                     pressReleaseRunnable = reset
-                    handler.postDelayed(reset, 150)
+                    handler.postDelayed(reset, 100)
                 }
             }
             false
@@ -831,7 +818,7 @@ class MainActivity : Activity() {
     ): Button {
         val button = addCompactButton(parent, "", description, action)
         setButtonIcon(button, drawableName, sizeDp, transparent = true)
-        button.setPadding(0, dp(3), 0, 0)
+        button.setPadding(0, dp(8), 0, 0)
         button.isClickable = true
         return button
     }
@@ -2871,11 +2858,11 @@ class DrawingView(context: android.content.Context) : View(context) {
             android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
         }
         if (from == null) {
-            target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
+            target.drawPoint(to.x, to.y, rasterPaint)
         } else {
-            // Round-capped connected segment; no isolated sample dots.
+            // Segmentos conectados y con extremos redondeados: sin puntos aislados
+            // ni círculos superpuestos que alteren visualmente la transparencia.
             target.drawLine(from.x, from.y, to.x, to.y, rasterPaint)
-            target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
         }
         rasterPaint.xfermode = null
     }

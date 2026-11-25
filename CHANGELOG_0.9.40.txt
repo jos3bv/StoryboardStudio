@@ -1,0 +1,9 @@
+BV'Storyboarder 0.9.40
+
+Cambios solicitados:
+- Lápiz: conserva el color RGB elegido y utiliza la opacidad exclusivamente como canal alfa/transparencia. Los segmentos del trazo se conectan con extremos redondeados y se eliminan los círculos superpuestos entre muestras para evitar acumulaciones visuales.
+- Botones del panel: todos los iconos parten al 50% de opacidad (alfa 128), suben al 100% mientras se pulsan y vuelven al 50% al soltar. La herramienta seleccionada ya no queda permanentemente resaltada.
+- Timeline: se aumenta el padding superior de los botones con icono a 8dp.
+- Selector de color: se reduce el espacio vertical asignado al selector grande a dos tercios del anterior.
+
+Versión: 0.9.40 (versionCode 51).
