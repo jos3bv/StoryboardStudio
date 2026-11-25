@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.40 - restored original add-shot SVG asset with a valid UTF-8 filename.
+// BV'Storyboarder 0.9.37 - 14 requested interface and drawing updates based on 0.9.36.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -347,7 +347,7 @@ class MainActivity : Activity() {
                     action()
                     updateActiveTool(this)
                 }
-                setButtonIcon(this, iconName, 28)
+                setButtonIcon(this, iconName, 40)
             }
             toolButtons.add(button)
             return button
@@ -370,7 +370,7 @@ class MainActivity : Activity() {
 
         fun addToolCell(row: LinearLayout, button: Button) {
             // Exact zero margins: adjacent button bounds share an edge.
-            row.addView(button, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            row.addView(button, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
@@ -403,9 +403,9 @@ class MainActivity : Activity() {
         updateActiveTool(toolButtons.first())
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
-        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(28)))
-        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(28)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(56)))
+        toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
+        toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(40)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(80)))
 
         val importLabel = TextView(this).apply {
             text = "Importar"
@@ -437,18 +437,18 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 28)
+                setButtonIcon(this, iconName, 40)
                 tag = false
                 compoundDrawables.getOrNull(1)?.alpha = 128
             }
-            imports.addView(b, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            imports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
         importButton("ic_import_image", "Importar imágenes") { chooseImage() }
         // Temporary icon: reuse the PDF export artwork until the final SRT icon is supplied.
         importButton("ic_import_srt", "Importar archivo SRT") { chooseSrt() }
-        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(28)))
+        sideContent.addView(imports, LinearLayout.LayoutParams(-1, dp(40)))
 
         val exportSpacer = View(this)
         sideContent.addView(exportSpacer, LinearLayout.LayoutParams(1, 0, 0.1f))
@@ -482,18 +482,18 @@ class MainActivity : Activity() {
                 stateListAnimator = null
                 setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
-                setButtonIcon(this, iconName, 28)
+                setButtonIcon(this, iconName, 40)
                 tag = false
                 compoundDrawables.getOrNull(1)?.alpha = 128
             }
-            exports.addView(b, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            exports.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                 setMargins(0, 0, dp(1), 0)
             })
         }
         exportButton("ic_export_png", "Exportar plano PNG") { exportCurrentPng() }
         exportButton("ic_export_all", "Exportar todos los planos PNG") { exportAllPng() }
         exportButton("ic_export_pdf", "Exportar PDF") { exportPdf() }
-        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(28)))
+        sideContent.addView(exports, LinearLayout.LayoutParams(-1, dp(40)))
         sidebar.addView(sideContent, LinearLayout.LayoutParams(0, -1, 1f))
 
         // Sliders are positioned beside the canvas, matching the annotated layout.

@@ -1,0 +1,30 @@
+BV'Storyboarder 0.9.37
+versionCode: 48
+Base: BV'Storyboarder 0.9.36 (the source ZIP supplied in this conversation)
+
+Implemented from the 14-point approved list:
+1. Center timeline toolbar groups vertically and align their contents to a common center line.
+2. Keep the left-panel buttons at the original 40dp button size and existing icon rendering; no new SVG button treatment.
+3. Remove gaps around the size/opacity slider rail and add a small inset to the left panel.
+4. Retain the drawing cache and stroke rendering path to reduce redraw work during continuous drawing.
+5. Preserve global undo/redo and record confirmed lasso transforms as an undoable change.
+6. Preserve existing drawing/import/export/timeline behaviors.
+7. Display the installed app version beside the app logo.
+8. Draw frame note text in red.
+9. Add a live selected-color indicator beside the color picker.
+10. Align session title and last-action text on a common vertical center/baseline and increase title spacing.
+11. Display the former File menu actions directly in the header.
+12. Compact header button padding and shorten labels.
+13. Add editable lasso selection with move/rotate/scale and Accept/Cancel controls.
+14. Set inactive tool icons to 50% opacity and the active tool to 100%.
+
+SVG handling:
+- All 30 SVG files are preserved byte-for-byte.
+- Only the corrupted, overlong filename for the add-frame SVG was changed to the safe filename "anadir plano.svg". Its SVG contents and artwork are unchanged.
+- Left-panel buttons retain the original 40dp sizing and the existing Button/compound-drawable approach.
+
+Verification:
+- ZIP integrity checked.
+- All 30 SVG XML documents parsed successfully.
+- All drawable resource identifiers referenced by MainActivity were found.
+- Android/Gradle compilation was not run because Gradle and Android SDK are not installed in this environment.
