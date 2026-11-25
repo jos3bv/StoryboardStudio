@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.38 - raster drawing and memory/history optimizations based on 0.9.37.
+// BV'Storyboarder 0.9.39 - pencil rendering, opacity consistency and timeline toolbar alignment.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -606,9 +606,13 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_add_frame", "Nuevo plano") { addFrame() }
         cutModeButton = addIconCompactButton(shotGroup, "ic_cut_frame", "Cortar plano") {
             timelineView.splitMode = !timelineView.splitMode
-            cutModeButton?.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                if (timelineView.splitMode) Color.rgb(20, 137, 195) else Color.rgb(78, 78, 78)
-            )
+            cutModeButton?.let { button ->
+                button.tag = timelineView.splitMode
+                button.compoundDrawables.getOrNull(1)?.alpha = if (timelineView.splitMode) 255 else 128
+            }
+        }.apply {
+            tag = false
+            compoundDrawables.getOrNull(1)?.alpha = 128
         }
         addIconCompactButton(shotGroup, "ic_duplicate_frame", "Duplicar plano") { duplicateFrame() }
         addIconCompactButton(shotGroup, "ic_delete_frame", "Eliminar plano") { deleteFrame() }
@@ -880,7 +884,7 @@ class MainActivity : Activity() {
             text = label; contentDescription = description
             textSize = if (label.length > 3) 9f else 16f
             isAllCaps = false; minWidth = dp(30); minimumWidth = dp(30)
-            setPadding(dp(2), 0, dp(2), 0)
+            setPadding(dp(2), dp(3), dp(2), 0)
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(78, 78, 78)))
@@ -2861,9 +2865,18 @@ class DrawingView(context: android.content.Context) : View(context) {
         rasterPaint.strokeWidth = width.coerceAtLeast(0.5f) * 2f
         rasterPaint.xfermode = if (erase) {
             android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
-        } else null
-        if (from == null) target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
-        else target.drawLine(from.x, from.y, to.x, to.y, rasterPaint)
+        } else {
+            // Replace covered pixels instead of alpha-blending every incoming sample
+            // over the previous one; this keeps brush opacity uniform along the stroke.
+            android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+        }
+        if (from == null) {
+            target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
+        } else {
+            // Round-capped connected segment; no isolated sample dots.
+            target.drawLine(from.x, from.y, to.x, to.y, rasterPaint)
+            target.drawCircle(to.x, to.y, rasterPaint.strokeWidth * 0.5f, rasterPaint)
+        }
         rasterPaint.xfermode = null
     }
 
@@ -2908,10 +2921,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         invalidateFrameCache(); invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
     }
-    fun brushOpacity(): Int = (brushOpacity * 100 / 255).coerceIn(0, 100)
+    fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
     fun configureBrush(size: Float, opacity: Int, pressure: Boolean) {
         setActiveBrushSize(size)
+        // Opacity is strictly the alpha channel (0..255); it never changes
+        // stylus sampling density, point spacing, or pressure interpolation.
         brushOpacity = opacity.coerceIn(0, 255)
         pressureSensitivity = pressure
     }

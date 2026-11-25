@@ -1,0 +1,21 @@
+BV'Storyboarder 0.9.39
+versionCode: 50
+Base: BV'Storyboarder 0.9.38
+
+Requested adjustments:
+1. Pencil rendering: retained raster drawing and made the live segments round-capped and connected. The raster paint uses SRC compositing for normal ink so repeated adjacent samples replace rather than accumulate alpha, preventing dotted/darker overlap artifacts and keeping opacity even along the stroke.
+2. Opacity: percentage maps linearly to the brush alpha channel (0..255). Opacity does not alter stylus sample count, point spacing, or pressure interpolation.
+3. Guillotine/split button: now follows the same inactive/active icon alpha behavior as pencil and eraser: 50% inactive, 100% active.
+4. Timeline toolbar: all compact buttons, including text and icon buttons, receive 3dp top padding for vertical optical centering.
+
+Preservation:
+- Raster drawing remains rasterized on screen; no vector drawing mode was introduced.
+- Existing session data and SVG assets retained.
+- All 30 SVG files byte-for-byte identical to 0.9.38.
+
+Verification:
+- ZIP integrity checked.
+- XML resources parsed.
+- SVG contents compared byte-for-byte.
+- Static source checks and Kotlin delimiter sanity check passed.
+- Android/Gradle build not run: no Gradle executable, wrapper, Kotlin compiler, or Android SDK in this environment.
