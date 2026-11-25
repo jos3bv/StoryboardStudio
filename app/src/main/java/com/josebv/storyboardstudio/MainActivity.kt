@@ -58,7 +58,7 @@ class MainActivity : Activity() {
     private var sequenceStartUptime = 0L
     private var sequenceStartPosition = 0
     private val appStorageDirectory by lazy {
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Storyboarder")
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "BVstoryboarder")
     }
     private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.sbd") }
     private val sessionsDirectory by lazy { File(appStorageDirectory, "sessions") }
@@ -618,7 +618,7 @@ class MainActivity : Activity() {
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), 0, dp(10), 0)
+            setPadding(dp(10), dp(2), dp(10), dp(2))
             clipChildren = false
         }
         val shotGroup = LinearLayout(this).apply {
@@ -652,8 +652,8 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
         addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
-        val shotHolder = FrameLayout(this).apply { addView(shotGroup, FrameLayout.LayoutParams(-2, dp(48), Gravity.CENTER)) }
-        toolbar.addView(shotHolder, LinearLayout.LayoutParams(-2, dp(48)))
+        val shotHolder = FrameLayout(this).apply { addView(shotGroup, FrameLayout.LayoutParams(-2, dp(40), Gravity.CENTER)) }
+        toolbar.addView(shotHolder, LinearLayout.LayoutParams(-2, dp(40)))
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(playback, "ic_first_frame", "Ir al inicio") { seekToTimelinePosition(0) }
@@ -665,8 +665,8 @@ class MainActivity : Activity() {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
-        val playbackHolder = FrameLayout(this).apply { addView(playback, FrameLayout.LayoutParams(-1, dp(48), Gravity.CENTER)) }
-        toolbar.addView(playbackHolder, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val playbackHolder = FrameLayout(this).apply { addView(playback, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
+        toolbar.addView(playbackHolder, LinearLayout.LayoutParams(0, dp(40), 1f))
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
@@ -687,9 +687,9 @@ class MainActivity : Activity() {
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") {
             timelineZoomSeek.progress = timelineView.changeZoom(1.25f)
         }
-        val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(48), Gravity.CENTER)) }
-        toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(48)))
-        // All three zones share the same 48dp parent height. Every icon button and
+        val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
+        toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(40)))
+        // All three zones share the same 40dp parent height. Every icon button and
         // the zoom SeekBar is laid out at 40dp and centered by the parent FrameLayout;
         // no top padding, font metrics or native minimum-height can shift the play icon.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
@@ -710,7 +710,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(48)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -1972,26 +1972,9 @@ class MainActivity : Activity() {
     }
 
     private fun migratePreviousStorage() {
-        try {
-            val oldRoot = File(filesDir, "storyboardstudio")
-            val oldAutosave = File(oldRoot, "session.json")
-            if (!sessionFile.exists() && oldAutosave.exists()) {
-                sessionFile.parentFile?.mkdirs()
-                oldAutosave.copyTo(sessionFile, overwrite = false)
-            }
-            val oldSessions = File(oldRoot, "sessions")
-            val previousDocumentsSessions = File(appStorageDirectory, "Sessions")
-            listOf(oldSessions, previousDocumentsSessions).filter { it.isDirectory }.forEach { sourceDirectory ->
-                sessionsDirectory.mkdirs()
-                sourceDirectory.listFiles()?.filter { it.isFile }?.forEach { old ->
-                    val target = File(sessionsDirectory, old.name)
-                    if (!target.exists()) old.copyTo(target, overwrite = false)
-                }
-            }
-        } catch (e: Exception) {
-            // Keep the app usable even if the legacy folder cannot be migrated.
-            android.util.Log.w("StoryboardStudio", "Storage migration skipped", e)
-        }
+        // 0.9.48 starts with a clean project format. Legacy sessions are intentionally
+        // not imported: the previous vector/layer model is not compatible with the
+        // planned single-bitmap-per-frame document model.
     }
 
     private fun loadSession() {
