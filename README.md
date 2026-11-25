@@ -1,14 +1,12 @@
-# BV'Storyboarder 0.9.43
+# BV'Storyboarder 0.9.45
 
-Código fuente Android completo.
+Código fuente Android de BV'Storyboarder.
 
-Cambios de esta versión: historial limitado a tres pasos y acotado al lienzo/línea de tiempo; preservación de ajustes de herramientas al deshacer/rehacer; límites de caché y liberación de bitmaps; armonización de los tres primeros bloques del panel izquierdo; estado visual persistente para lápiz/goma/guillotina; padding superior de 3 dp en botones de la barra de línea de tiempo; separadores en el encabezado.
+Cambios de esta versión:
+- Ajuste de ancho uniforme en los tres controles superiores del panel de color.
+- Menos separación entre selector HSV e historial; más separación entre escala de grises y botonera.
+- Mayor padding inferior del panel izquierdo.
+- Historial de 10 pasos para lienzo y estructura de planos, sin incluir ajustes de herramientas.
+- Corrección de la goma rasterizada mediante máscara alfa y PorterDuff DST_OUT para evitar borrados rectangulares.
 
-Consulta `CHANGELOG_0.9.43.txt` para el detalle.
-
-Compilación: sigue las instrucciones de `COMPILAR_APK_PASO_A_PASO.txt`.
-
-
-## Versión 0.9.44
-
-Optimización del dibujo incremental del lápiz y la goma. Consulta `CHANGELOG_0.9.44.txt` para los detalles y las limitaciones de verificación.
+Compilación: importar el proyecto en Android Studio o ejecutar el workflow de GitHub Actions del repositorio.

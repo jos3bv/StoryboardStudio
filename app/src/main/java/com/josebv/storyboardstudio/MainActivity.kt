@@ -89,7 +89,7 @@ class MainActivity : Activity() {
     private val redoHistory = ArrayDeque<String>()
     private var restoringHistory = false
     private var lastHistoryState: String? = null
-    private val maxHistorySteps = 3
+    private val maxHistorySteps = 10
 
     private val handler = Handler(Looper.getMainLooper())
     private val playbackUpdater = object : Runnable {
@@ -258,7 +258,7 @@ class MainActivity : Activity() {
         val sideContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(dp(8), dp(2), dp(8), dp(2))
+            setPadding(dp(8), dp(2), dp(8), dp(8))
         }
 
         val picker = HueSatValPickerView(
@@ -283,7 +283,8 @@ class MainActivity : Activity() {
             setMargins(0, dp(2), 0, dp(3))
         })
         sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
-            setMargins(0, dp(0.25f), 0, dp(4))
+            // Keep the chromatic controls flush with the color preview and swatches.
+            setMargins(0, 0, 0, 0)
         })
 
         val swatchWrap = LinearLayout(this).apply {
@@ -319,7 +320,8 @@ class MainActivity : Activity() {
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
         sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)).apply {
-            setMargins(0, 0, 0, dp(2))
+            // Small gap to the HSV selector; more breathing room before tool buttons.
+            setMargins(0, 0, 0, dp(8))
         })
         refreshRecentColorSwatches()
 
@@ -2606,7 +2608,7 @@ private class HueSatValPickerView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val inset = 12f * density
+        val inset = 0f
         val barHeight = 24f * density
         hueBar = RectF(inset, inset, width - inset, inset + barHeight)
         paint.style = Paint.Style.FILL
@@ -2629,7 +2631,8 @@ private class HueSatValPickerView(
 
         val availableTop = hueBar.bottom + 12f * density
         val availableHeight = (height - availableTop - 2f * density).coerceAtLeast(1f)
-        val squareWidth = ((width - 36f * density) * (2f / 3f)).coerceAtLeast(1f)
+        // Match the hue strip and swatch blocks to the same usable width.
+        val squareWidth = width.toFloat().coerceAtLeast(1f)
         val squareHeight = min(squareWidth * 2.22f, availableHeight * (2f / 3f)).coerceAtLeast(1f)
         val left = (width - squareWidth) / 2f
         square = RectF(left, availableTop, left + squareWidth, availableTop + squareHeight)
@@ -2799,8 +2802,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         isDither = true
     }
     private val inProgressDisplayPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val inProgressErasePaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
-        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+    private val inProgressErasePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        // The in-progress bitmap is an alpha mask. DST_OUT erases only where the
+        // mask contains painted pixels; CLEAR would erase its entire rectangular bounds.
+        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
     }
     private var inProgressBounds: RectF? = null
     private var inProgressLastPoint: PointF? = null
@@ -3063,7 +3068,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             val removed = list.removeAt(list.lastIndex)
             val redoStack = redoFrames.getOrPut(frame) { mutableListOf() }
             redoStack.add(removed)
-            while (redoStack.size > 3) redoStack.removeAt(0)
+            while (redoStack.size > 10) redoStack.removeAt(0)
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
@@ -3078,7 +3083,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             else importedImages.remove(frame)
             val clearRedo = clearRedoSnapshots.getOrPut(frame) { mutableListOf() }
             clearRedo.add(snapshot)
-            while (clearRedo.size > 3) clearRedo.removeAt(0)
+            while (clearRedo.size > 10) clearRedo.removeAt(0)
             invalidateFrameCache()
             invalidate()
             onChanged?.invoke()
@@ -3100,7 +3105,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             val snapshot = clearStack.removeAt(clearStack.lastIndex)
             val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
             clearUndo.add(snapshot)
-            while (clearUndo.size > 3) clearUndo.removeAt(0)
+            while (clearUndo.size > 10) clearUndo.removeAt(0)
             frames.remove(frame)
             importedImages.remove(frame)
             invalidateFrameCache()
@@ -3117,7 +3122,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val snapshot = ClearSnapshot(existingStrokes.toList(), existingImage)
         val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
         clearUndo.add(snapshot)
-        while (clearUndo.size > 3) clearUndo.removeAt(0)
+        while (clearUndo.size > 10) clearUndo.removeAt(0)
         clearRedoSnapshots.remove(frame)
 
         frames.remove(frame)
