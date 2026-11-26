@@ -170,16 +170,25 @@ class MainActivity : Activity() {
         val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
         val sideButtonMask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY
         val sideButtonDown = isStylus && (event.buttonState and sideButtonMask) != 0
-        if (sideButtonDown && !stylusSideButtonDown &&
-            (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE || event.actionMasked == MotionEvent.ACTION_HOVER_MOVE)) {
-            if (::drawing.isInitialized) {
+        val buttonPressedNow = event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
+            isStylus && (sideButtonDown || event.buttonState != 0)
+        val fallbackPressEdge = sideButtonDown && !stylusSideButtonDown &&
+            (event.actionMasked == MotionEvent.ACTION_DOWN ||
+             event.actionMasked == MotionEvent.ACTION_MOVE ||
+             event.actionMasked == MotionEvent.ACTION_HOVER_MOVE)
+        if (buttonPressedNow || fallbackPressEdge) {
+            if (!stylusSideButtonDown && ::drawing.isInitialized) {
                 drawing.setEraser(!drawing.isEraser())
                 updateActiveToolButton()
                 brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
                 scheduleAutosave()
             }
         }
-        stylusSideButtonDown = sideButtonDown
+        if (event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
+            stylusSideButtonDown = false
+        } else {
+            stylusSideButtonDown = sideButtonDown || (buttonPressedNow && event.actionMasked != MotionEvent.ACTION_BUTTON_RELEASE)
+        }
         return super.dispatchTouchEvent(event)
     }
 
@@ -253,7 +262,7 @@ class MainActivity : Activity() {
         // Acciones de Archivo visibles permanentemente en el encabezado.
         fun headerAction(label: String, widthDp: Int, action: () -> Unit) {
             val button = addHeaderButton(top, label, dp(widthDp), action)
-            button.textSize = 14f
+            button.textSize = 12f
             button.setPadding(dp(1), 0, dp(1), 0)
             button.maxLines = 1
         }
@@ -663,7 +672,7 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
-                leftMargin = dp(8)
+                leftMargin = 0
                 topMargin = 0
                 rightMargin = 0
                 bottomMargin = 0
@@ -701,7 +710,7 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(5), 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -888,7 +897,7 @@ class MainActivity : Activity() {
         fullscreenTimeline?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenSliderRail?.visibility = View.VISIBLE
         (fullscreenSliderRail?.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
-            params.leftMargin = if (enabled) 0 else dp(8)
+            params.leftMargin = 0
             fullscreenSliderRail?.layoutParams = params
         }
         showPanelsButton?.visibility = View.VISIBLE
