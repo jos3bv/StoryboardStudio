@@ -795,7 +795,7 @@ class MainActivity : Activity() {
             projectLabel = projectName
         }
         timelineScroll.addView(timelineView, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, dp(178)
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(112)
         ))
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
@@ -818,7 +818,7 @@ class MainActivity : Activity() {
             bottomMargin = dp(3)
         })
         timelinePanel.addView(timelineContent, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(timelinePanel, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(timelinePanel, LinearLayout.LayoutParams(-1, dp(160)))
 
         applySystemTypeface(root)
         setContentView(root)
@@ -3211,7 +3211,12 @@ class DrawingView(context: android.content.Context) : View(context) {
             inProgressPath.lineTo(last.x, last.y)
             inProgressPaint.strokeWidth = inProgressLastWidth
             inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
+            // Close the final segment with a flat cap: do not add a rounded tip
+            // after the user lifts the pen. The live stroke remains unchanged.
+            val previousCap = inProgressPaint.strokeCap
+            inProgressPaint.strokeCap = Paint.Cap.BUTT
             inProgressCanvas?.drawPath(inProgressPath, inProgressPaint)
+            inProgressPaint.strokeCap = previousCap
             expandInProgressBounds(last, inProgressLastWidth)
         }
     }
