@@ -72,6 +72,8 @@ class MainActivity : Activity() {
     private var activeToolButton: Button? = null
     private var pencilToolButton: Button? = null
     private var eraserToolButton: Button? = null
+    private var pressureToolButton: Button? = null
+    private var lassoToolButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -205,6 +207,7 @@ class MainActivity : Activity() {
                 if (!restoringHistory) scheduleHistoryRecord()
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
+            onLassoStateChanged = { active -> updateModeToolAlpha(lassoActive = active) }
         }
         if (recentColors.isEmpty()) {
             recentColors.addAll(listOf(
@@ -399,6 +402,7 @@ class MainActivity : Activity() {
                         selectionActionsView?.visibility = View.GONE
                     }
                     action()
+                    if (description != "Selección tipo lazo") updateModeToolAlpha(lassoActive = false)
                     if (description == "Lápiz" || description == "Goma") {
                         updateActiveToolButton(description == "Goma")
                     }
@@ -443,26 +447,30 @@ class MainActivity : Activity() {
         addToolCell(toolRow1, eraserToolButton!!)
         addToolCell(toolRow1, tool("ic_text", "Texto") { addTextNote() })
 
-        addToolCell(toolRow2, tool("ic_pressure", "Presión del lápiz") {
+        pressureToolButton = tool("ic_pressure", "Presión del lápiz") {
             drawing.configureBrush(
                 drawing.activeBrushSize(),
                 drawing.brushOpacity() * 255 / 100,
                 !drawing.pressureEnabled()
             )
+            updateModeToolAlpha()
             setStatus(if (drawing.pressureEnabled()) "Presión activada" else "Presión desactivada")
             scheduleAutosave()
-        })
+        }
+        addToolCell(toolRow2, pressureToolButton!!)
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
-        val lassoButton = tool("ic_pressure", "Selección tipo lazo") {
+        lassoToolButton = tool("ic_pressure", "Selección tipo lazo") {
             drawing.startLassoSelection()
             selectionActionsView?.visibility = View.VISIBLE
+            updateModeToolAlpha(lassoActive = true)
         }
-        addToolCell(toolRow2, lassoButton)
+        addToolCell(toolRow2, lassoToolButton!!)
         toolButtons.forEach { button ->
             button.tag = false
             button.compoundDrawables.getOrNull(1)?.alpha = 128
         }
         updateActiveToolButton(false)
+        updateModeToolAlpha()
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
@@ -602,12 +610,14 @@ class MainActivity : Activity() {
         val acceptSelection = addCompactButton(selectionActions, "Aceptar", "Confirmar transformación") {
             drawing.confirmSelection()
             selectionActionsView?.visibility = View.GONE
+            updateModeToolAlpha(lassoActive = false)
             recordHistory()
             scheduleAutosave()
         }
         val cancelSelection = addCompactButton(selectionActions, "Cancelar", "Cancelar selección") {
             drawing.cancelSelection()
             selectionActionsView?.visibility = View.GONE
+            updateModeToolAlpha(lassoActive = false)
         }
         selectionActionsView = selectionActions
         acceptSelection.layoutParams = acceptSelection.layoutParams.apply { width = dp(112); height = dp(48) }
@@ -645,9 +655,12 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 0)
             minWidth = dp(38)
             setTextColor(Color.LTGRAY)
-            setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
+            background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            foreground = null
+            elevation = 0f
+            stateListAnimator = null
             setOnClickListener { drawing.resetViewport() }
-            setButtonIcon(this, "ic_fit_canvas", 34, transparent = false)
+            setButtonIcon(this, "ic_fit_canvas", 34, transparent = true)
         }
         canvasArea.addView(centerButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(12)
@@ -852,7 +865,7 @@ class MainActivity : Activity() {
         fullscreenHeader?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenSidebar?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenTimeline?.visibility = if (enabled) View.GONE else View.VISIBLE
-        fullscreenSliderRail?.visibility = if (enabled) View.GONE else View.VISIBLE
+        fullscreenSliderRail?.visibility = if (enabled) View.VISIBLE else View.GONE
         showPanelsButton?.visibility = View.VISIBLE
         showPanelsButton?.contentDescription = if (enabled) "Mostrar paneles" else "Pantalla completa"
         showPanelsButton?.let { CanvasFullscreenControls.updateToggleIcon(this, it, enabled) }
@@ -866,7 +879,9 @@ class MainActivity : Activity() {
         val size = dp(sizeDp)
         drawable.setBounds(0, 0, size, size)
         button.text = ""
-        drawable.alpha = 128
+        drawable.alpha = if (button.tag == true) 255 else 128
+        button.background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        button.foreground = null
         button.setCompoundDrawables(null, drawable, null, null)
         var iconHovered = false
         var pressReleaseRunnable: Runnable? = null
@@ -963,10 +978,13 @@ class MainActivity : Activity() {
             contentDescription = description
             minWidth = dp(38); minimumWidth = dp(38)
             setTextColor(Color.LTGRAY)
-            setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(83, 83, 83)))
+            background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            foreground = null
+            elevation = 0f
+            stateListAnimator = null
             setPadding(0, 0, 0, 0)
             setOnClickListener { action() }
-            setButtonIcon(this, iconName, 34, transparent = false)
+            setButtonIcon(this, iconName, 34, transparent = true)
         }
         parent.addView(button, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
             setMargins(dp(2), dp(2), dp(2), dp(2))
@@ -1005,6 +1023,17 @@ class MainActivity : Activity() {
             val selected = button === activeToolButton
             button.tag = selected
             button.compoundDrawables.getOrNull(1)?.alpha = if (selected) 255 else 128
+        }
+    }
+
+    private fun updateModeToolAlpha(lassoActive: Boolean = false) {
+        pressureToolButton?.let { button ->
+            button.tag = drawing.pressureEnabled()
+            button.compoundDrawables.getOrNull(1)?.alpha = if (drawing.pressureEnabled()) 255 else 128
+        }
+        lassoToolButton?.let { button ->
+            button.tag = lassoActive
+            button.compoundDrawables.getOrNull(1)?.alpha = if (lassoActive) 255 else 128
         }
     }
 
@@ -1164,8 +1193,6 @@ class MainActivity : Activity() {
         listOf("brushSize", "eraserSize", "hue", "saturation", "value",
             "brushColor", "brushOpacity", "pressureSensitivity").forEach { drawingState.remove(it) }
         val snapshot = JSONObject()
-        snapshot.put("currentFrame", currentFrame)
-        snapshot.put("projectName", projectName)
         val durations = JSONArray()
         frameDurations.forEach { durations.put(it) }
         snapshot.put("durations", durations)
@@ -1228,7 +1255,7 @@ class MainActivity : Activity() {
             val preservedEraser = drawing.isEraser()
             val preservedOpacity = drawing.brushOpacity()
             val preservedPressure = drawing.pressureEnabled()
-            projectName = snapshot.optString("projectName", projectName)
+            val preservedFrame = currentFrame.coerceIn(0, maxOf(0, frameDurations.lastIndex))
             frameDurations.clear()
             val durations = snapshot.optJSONArray("durations")
             if (durations != null && durations.length() > 0) {
@@ -1246,7 +1273,7 @@ class MainActivity : Activity() {
             drawing.setEraser(preservedEraser)
             updateActiveToolButton(preservedEraser)
             drawing.configureBrush(preservedSize, preservedOpacity * 255 / 100, preservedPressure)
-            currentFrame = snapshot.optInt("currentFrame", currentFrame).coerceIn(0, frameDurations.lastIndex)
+            currentFrame = preservedFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
             inlineColorPicker?.setColor(preservedColor)
             updateSelectedColorIndicator()
@@ -2953,6 +2980,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
+    var onLassoStateChanged: ((Boolean) -> Unit)? = null
     // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     // Only the visible frame remains decoded in RAM. Inactive frames are stored as
@@ -3238,8 +3266,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         val nextWidth = width.coerceAtLeast(0.5f)
         inProgressPaint.strokeWidth = ((inProgressLastWidth + nextWidth) * 0.5f).coerceAtLeast(1f)
         inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
-        inProgressPaint.strokeCap = Paint.Cap.BUTT
-        inProgressPaint.strokeJoin = Paint.Join.BEVEL
+        // Round joins/caps overlap adjacent samples, preventing visible gaps while
+        // keeping the live bitmap as the exact committed result (no end-of-stroke redraw).
+        inProgressPaint.strokeCap = Paint.Cap.ROUND
+        inProgressPaint.strokeJoin = Paint.Join.ROUND
         inProgressCanvas?.drawLine(previous.x, previous.y, point.x, point.y, inProgressPaint)
         inProgressLastPoint = PointF(point.x, point.y)
         inProgressLastWidth = nextWidth
@@ -3622,6 +3652,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun startLassoSelection() {
         cancelSelection()
         lassoEnabled = true
+        onLassoStateChanged?.invoke(true)
         lassoPoints.clear()
         selectedStrokes.clear()
         selectedPixels?.recycle(); selectedPixels = null
@@ -3658,6 +3689,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         if (selectedStrokes.isEmpty()) {
             lassoEnabled = false
+            onLassoStateChanged?.invoke(false)
             lassoPoints.clear()
             invalidate()
             return
@@ -3687,6 +3719,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionParts.clear()
         lassoPoints.clear()
         lassoEnabled = false
+        onLassoStateChanged?.invoke(false)
         selectionTranslateX = 0f
         selectionTranslateY = 0f
         selectionRotation = 0f
@@ -3711,6 +3744,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionParts.clear()
         lassoPoints.clear()
         lassoEnabled = false
+        onLassoStateChanged?.invoke(false)
         selectionTranslateX = 0f
         selectionTranslateY = 0f
         selectionRotation = 0f
@@ -3745,6 +3779,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun finishLasso() {
         lassoEnabled = false
+        onLassoStateChanged?.invoke(false)
         if (lassoPoints.size < 3) { lassoPoints.clear(); releaseInProgressSurface(); invalidate(); return }
         bakeLegacyFrame(frame)
         val source = bitmapFor(frame)

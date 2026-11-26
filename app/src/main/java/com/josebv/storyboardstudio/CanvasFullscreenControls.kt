@@ -13,7 +13,10 @@ object CanvasFullscreenControls {
         minWidth = 0
         minimumWidth = 0
         setTextColor(android.graphics.Color.WHITE)
-        setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(83, 83, 83)))
+        background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        foreground = null
+        elevation = 0f
+        stateListAnimator = null
         updateToggleIcon(context, this, false)
         setOnClickListener { onToggle() }
     }
@@ -24,9 +27,13 @@ object CanvasFullscreenControls {
         val drawable = android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
         val size = (30f * context.resources.displayMetrics.density + 0.5f).toInt()
         drawable.setBounds(0, 0, size, size)
-        drawable.alpha = 255
+        drawable.alpha = 128
         button.text = ""
         button.contentDescription = if (fullscreen) "Mostrar paneles" else "Pantalla completa"
+        button.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        button.foreground = null
+        button.elevation = 0f
+        button.stateListAnimator = null
         button.setCompoundDrawables(null, drawable, null, null)
         button.gravity = android.view.Gravity.CENTER
     }
