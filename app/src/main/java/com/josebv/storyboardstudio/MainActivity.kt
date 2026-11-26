@@ -69,7 +69,7 @@ class MainActivity : Activity() {
     private var sequenceStartUptime = 0L
     private var sequenceStartPosition = 0
     private val appStorageDirectory by lazy {
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "BVstoryboarder")
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "BVStoryBoarder")
     }
     private val sessionFile by lazy { File(appStorageDirectory, "Autosave/session.sbd") }
     private val sessionsDirectory by lazy { File(appStorageDirectory, "sessions") }
@@ -416,8 +416,8 @@ class MainActivity : Activity() {
             if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 initializeSessionStorage()
             } else {
-                setStatus("Se necesita permiso de almacenamiento para usar Documentos/BVstoryboarder")
-                Toast.makeText(this, "Autoriza el almacenamiento para guardar sesiones en Documentos/BVstoryboarder", Toast.LENGTH_LONG).show()
+                setStatus("Se necesita permiso de almacenamiento para usar Documentos/BVStoryBoarder")
+                Toast.makeText(this, "Autoriza el almacenamiento para guardar sesiones en Documentos/BVStoryBoarder", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -805,8 +805,6 @@ class MainActivity : Activity() {
             drawing.configureBrush(drawing.activeBrushSize(), value * 255 / 100, drawing.pressureEnabled())
             scheduleAutosave()
         }
-        val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
-        sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
         fullscreenSidebar = sidebar
         work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
@@ -2418,7 +2416,7 @@ class MainActivity : Activity() {
             val file = File(sessionsDirectory, "${base}_$stamp.sbd")
             writeProjectArchive(file)
             setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
-            Toast.makeText(this, "Sesión guardada en Documentos/BVstoryboarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Sesión guardada en Documentos/BVStoryBoarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             setStatus("No se pudo guardar la copia: ${e.message}")
         }
@@ -2431,7 +2429,7 @@ class MainActivity : Activity() {
         if (files.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("Sesiones recientes")
-                .setMessage("Todavía no hay sesiones guardadas en Documentos/BVstoryboarder/Sessions.")
+                .setMessage("Todavía no hay sesiones guardadas en Documentos/BVStoryBoarder/Sessions.")
                 .setPositiveButton("Aceptar", null)
                 .show()
             return
@@ -2465,7 +2463,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Guardar sesión")
-            .setMessage("La sesión se guardará en Documentos/BVstoryboarder/sessions.")
+            .setMessage("La sesión se guardará en Documentos/BVStoryBoarder/sessions.")
             .setView(nameInput)
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Guardar") { _, _ ->
@@ -2616,7 +2614,7 @@ class MainActivity : Activity() {
     ) {
         val sessionFolder = safeProjectFileName()
         val relativePath = Environment.DIRECTORY_DOCUMENTS +
-            "/Storyboarder/Exports/$sessionFolder/$subfolder/"
+            "/BVStoryBoarder/Exports/$sessionFolder/$subfolder/"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             // Re-exporting the same session/file replaces the previous result.
@@ -2654,7 +2652,7 @@ class MainActivity : Activity() {
         } else {
             val base = File(
                 getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
-                "Storyboarder/Exports/$sessionFolder/$subfolder"
+                "BVStoryBoarder/Exports/$sessionFolder/$subfolder"
             )
             if (!base.exists() && !base.mkdirs()) throw IllegalStateException("No se pudo crear ${base.absolutePath}")
             FileOutputStream(File(base, displayName), false).use(writer)
@@ -2671,6 +2669,7 @@ class MainActivity : Activity() {
                 val total = frameDurations.size.coerceAtLeast(1)
                 frameDurations.indices.forEach { index ->
                     val page = pdf.startPage(PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create())
+                    page.canvas.drawColor(Color.WHITE)
                     drawing.drawFrameToCanvas(index, page.canvas)
                     pdf.finishPage(page)
                     progress.update(((index + 1) * 85 / total), "Preparando página ${index + 1} de $total")
@@ -2690,7 +2689,7 @@ class MainActivity : Activity() {
                 }
                 progress.update(100, "Exportación completada")
                 runOnUiThread {
-                    setStatus("PDF guardado en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PDF")
+                    setStatus("PDF guardado en Documentos/BVStoryBoarder/Exports/${safeProjectFileName()}/PDF")
                     Toast.makeText(this, "PDF exportado correctamente", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
@@ -2722,7 +2721,7 @@ class MainActivity : Activity() {
                 }
                 progress.update(100, "Exportación completada")
                 runOnUiThread {
-                    setStatus("PNG guardado en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PNG")
+                    setStatus("PNG guardado en Documentos/BVStoryBoarder/Exports/${safeProjectFileName()}/PNG")
                     Toast.makeText(this, "Plano ${frameIndex + 1} exportado correctamente", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
@@ -2759,7 +2758,7 @@ class MainActivity : Activity() {
                 }
                 progress.update(100, "Exportación completada")
                 runOnUiThread {
-                    setStatus("$total PNG guardados en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PNG")
+                    setStatus("$total PNG guardados en Documentos/BVStoryBoarder/Exports/${safeProjectFileName()}/PNG")
                     Toast.makeText(this, "$total planos exportados correctamente", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
@@ -4913,6 +4912,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun renderFrame(index: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
         bakeLegacyFrame(index)
         val frameBitmap = bitmapFor(index)
         canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))

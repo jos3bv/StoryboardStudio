@@ -25,7 +25,7 @@ object CanvasFullscreenControls {
         val resource = if (fullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen_enter
         val bitmap = BitmapFactory.decodeResource(context.resources, resource) ?: return
         val drawable = android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
-        val size = (30f * context.resources.displayMetrics.density + 0.5f).toInt()
+        val size = (34f * context.resources.displayMetrics.density + 0.5f).toInt()
         drawable.setBounds(0, 0, size, size)
         drawable.alpha = 128
         button.text = ""
