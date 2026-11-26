@@ -200,31 +200,6 @@ class MainActivity : Activity() {
         }
     }
 
-    @Deprecated("Deprecated in Android, retained for compatibility with the current project setup")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_SESSION || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        try {
-            val readPermission = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
-            if (readPermission != 0) {
-                try { contentResolver.takePersistableUriPermission(uri, readPermission) } catch (_: Exception) { }
-            }
-            val jsonText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                ?: throw IllegalStateException("No se pudo leer el archivo seleccionado")
-            val sessionJson = JSONObject(jsonText)
-            if (!sessionJson.has("drawing") || !sessionJson.has("durations")) {
-                throw IllegalArgumentException("El archivo no parece ser una sesión válida de BV'Storyboarder")
-            }
-            saveSession(showMessage = false)
-            applySessionJson(sessionJson)
-            resetHistory()
-            Toast.makeText(this, "Sesión abierta correctamente", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            setStatus("No se pudo abrir la sesión: ${e.message}")
-            Toast.makeText(this, "Error al abrir la sesión: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
 
     private fun buildInterface() {
         drawing = DrawingView(this).apply {
@@ -1475,7 +1450,7 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         startActivityForResult(intent, REQUEST_IMAGE)
     }
@@ -1595,6 +1570,33 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
         when (requestCode) {
+            REQUEST_SESSION -> {
+                try {
+                    val grantFlags = data.flags and
+                        (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    if (grantFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                        try {
+                            contentResolver.takePersistableUriPermission(uri, grantFlags)
+                        } catch (_: Exception) {
+                            // Some providers grant temporary access but do not support persistable grants.
+                        }
+                    }
+                    val jsonText = contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                        ?: throw IllegalStateException("No se pudo leer el archivo seleccionado")
+                    val sessionJson = JSONObject(jsonText)
+                    if (!sessionJson.has("drawing") || !sessionJson.has("durations")) {
+                        throw IllegalArgumentException("El archivo no parece ser una sesión válida de BV'Storyboarder")
+                    }
+                    saveSession(showMessage = false)
+                    applySessionJson(sessionJson)
+                    resetHistory()
+                    Toast.makeText(this, "Sesión abierta correctamente", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    setStatus("No se pudo abrir la sesión: ${e.message}")
+                    Toast.makeText(this, "Error al abrir la sesión: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
             REQUEST_SRT -> {
                 try {
                     val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Importado.srt"
