@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.54 - bounded frame residency and region-based stroke history.
+// BV'Storyboarder 0.9.57 - unified frame-aware stroke undo and session opening.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -43,7 +43,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : Activity() {
-    companion object { private const val REQUEST_IMAGE = 8042; private const val REQUEST_SRT = 8043 }
+    companion object { private const val REQUEST_IMAGE = 8042; private const val REQUEST_SRT = 8043; private const val REQUEST_SESSION = 8044 }
     private lateinit var drawing: DrawingView
     private lateinit var timelineView: TimelineView
     private lateinit var status: TextView
@@ -127,6 +127,10 @@ class MainActivity : Activity() {
         while (queue.isNotEmpty()) queue.removeFirst().delete()
     }
 
+    private fun clearRedoHistory() {
+        clearHistoryFiles(redoHistory)
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private val historyRecordRunnable = Runnable {
         historyRecordPending = false
@@ -196,6 +200,32 @@ class MainActivity : Activity() {
         }
     }
 
+    @Deprecated("Deprecated in Android, retained for compatibility with the current project setup")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_SESSION || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            val readPermission = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (readPermission != 0) {
+                try { contentResolver.takePersistableUriPermission(uri, readPermission) } catch (_: Exception) { }
+            }
+            val jsonText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                ?: throw IllegalStateException("No se pudo leer el archivo seleccionado")
+            val sessionJson = JSONObject(jsonText)
+            if (!sessionJson.has("drawing") || !sessionJson.has("durations")) {
+                throw IllegalArgumentException("El archivo no parece ser una sesión válida de BV'Storyboarder")
+            }
+            saveSession(showMessage = false)
+            applySessionJson(sessionJson)
+            resetHistory()
+            Toast.makeText(this, "Sesión abierta correctamente", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            setStatus("No se pudo abrir la sesión: ${e.message}")
+            Toast.makeText(this, "Error al abrir la sesión: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun buildInterface() {
         drawing = DrawingView(this).apply {
             onChanged = {
@@ -209,6 +239,7 @@ class MainActivity : Activity() {
                 }
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
+            onNewStroke = { clearRedoHistory() }
         }
         if (recentColors.isEmpty()) {
             recentColors.addAll(listOf(
@@ -245,7 +276,7 @@ class MainActivity : Activity() {
         headerDivider()
         headerAction("Abrir sesión", 70, ::openSessionFile)
         headerDivider()
-        headerAction("Abrir", 48, ::showLocalSessionsDialog)
+        headerAction("Ver recientes", 76, ::showLocalSessionsDialog)
         headerDivider()
         headerAction("Guardar como", 76, ::saveSessionAsFile)
         headerDivider()
@@ -657,7 +688,7 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, 0, 0, 0)
+            setPadding(0, 15, 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -696,21 +727,21 @@ class MainActivity : Activity() {
         addIconCompactButton(shotGroup, "ic_duration_up", "Aumentar duración") { changeDuration(500) }
         addIconCompactButton(shotGroup, "ic_move_before", "Mover plano antes") { moveSelectedFrame(-1) }
         addIconCompactButton(shotGroup, "ic_move_after", "Mover plano después") { moveSelectedFrame(1) }
-        val shotHolder = FrameLayout(this).apply { addView(shotGroup, FrameLayout.LayoutParams(-2, dp(40), Gravity.CENTER)) }
-        toolbar.addView(shotHolder, LinearLayout.LayoutParams(-2, dp(40)))
+        val shotHolder = FrameLayout(this).apply { addView(shotGroup, FrameLayout.LayoutParams(-2, dp(32), Gravity.CENTER)) }
+        toolbar.addView(shotHolder, LinearLayout.LayoutParams(-2, dp(32)))
 
         val playback = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(playback, "ic_first_frame", "Ir al inicio") { seekToTimelinePosition(0) }
         addIconCompactButton(playback, "ic_previous_frame", "Plano anterior") {
             stopPlayback(); selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 40) { toggleAudio() }
+        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 28) { toggleAudio() }
         addIconCompactButton(playback, "ic_next_frame", "Plano siguiente") {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
         addIconCompactButton(playback, "ic_last_frame", "Ir al final") { seekToTimelinePosition(totalDuration()) }
-        val playbackHolder = FrameLayout(this).apply { addView(playback, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
-        toolbar.addView(playbackHolder, LinearLayout.LayoutParams(0, dp(40), 1f))
+        val playbackHolder = FrameLayout(this).apply { addView(playback, FrameLayout.LayoutParams(-1, dp(32), Gravity.CENTER)) }
+        toolbar.addView(playbackHolder, LinearLayout.LayoutParams(0, dp(32), 1f))
 
         val zoomGroup = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         addIconCompactButton(zoomGroup, "ic_center_timeline", "Ir al plano seleccionado") { timelineView.centerOnPlayhead() }
@@ -724,17 +755,17 @@ class MainActivity : Activity() {
                 timelineView.setZoomProgress(progress)
             })
         }
-        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(32), 1f).apply {
+        zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
             setMargins(dp(4), 0, dp(4), 0)
         })
         addIconCompactButton(zoomGroup, "ic_zoom_in", "Acercar timeline") {
             timelineZoomSeek.progress = timelineView.changeZoom(1.25f)
         }
-        val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(40), Gravity.CENTER)) }
-        toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(40)))
-        // All three zones share the same exact 40dp parent height. The 2dp top inset
-        // is internal to each button; it does not increase the toolbar row height.
+        val zoomHolder = FrameLayout(this).apply { addView(zoomGroup, FrameLayout.LayoutParams(-1, dp(32), Gravity.CENTER)) }
+        toolbar.addView(zoomHolder, LinearLayout.LayoutParams(dp(430), dp(32)))
+        // All toolbar zones match the visible 28dp icons, with a compact 32dp row.
+        // Buttons and the zoom slider do not impose a taller minimum row height.
         listOf(shotGroup, playback, zoomGroup).forEach { group ->
             group.gravity = Gravity.CENTER
             group.minimumHeight = 0
@@ -742,20 +773,21 @@ class MainActivity : Activity() {
                 val child = group.getChildAt(i)
                 child.translationY = 0f
                 if (child is Button) {
-                    // A small internal top inset applies consistently to every
-                    // timeline toolbar button without changing the 40dp row height.
-                    child.setPadding(0, dp(2), 0, 0)
-                    child.minHeight = dp(40)
-                    child.minimumHeight = dp(40)
+                    // Keep the visible icon centered inside the compact button area.
+                    child.setPadding(0, 0, 0, 0)
+                    child.minHeight = dp(32)
+                    child.minimumHeight = dp(32)
+                    child.layoutParams = child.layoutParams.apply { height = dp(32) }
                     child.gravity = Gravity.CENTER
                     child.includeFontPadding = false
                 } else if (child is SeekBar) {
-                    child.minimumHeight = dp(40)
+                    child.minimumHeight = dp(24)
+                    child.minHeight = dp(24)
                     child.setPadding(dp(2), 0, dp(2), 0)
                 }
             }
         }
-        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(40)))
+        timelinePanel.addView(toolbar, LinearLayout.LayoutParams(-1, dp(32)))
 
         val timelineScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -1940,9 +1972,9 @@ class MainActivity : Activity() {
     private fun showArchivoPopup(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add("Guardar copia en la aplicación").setOnMenuItemClickListener { saveLocalSnapshot(); true }
-        popup.menu.add("Abrir sesión guardada").setOnMenuItemClickListener { showLocalSessionsDialog(); true }
+        popup.menu.add("Ver sesiones recientes").setOnMenuItemClickListener { showLocalSessionsDialog(); true }
         popup.menu.add("Guardar como archivo…").setOnMenuItemClickListener { saveSessionAsFile(); true }
-        popup.menu.add("Abrir archivo de sesión…").setOnMenuItemClickListener { openSessionFile(); true }
+        popup.menu.add("Abrir sesión desde archivo…").setOnMenuItemClickListener { openSessionFile(); true }
         popup.menu.add("Crear sesión nueva").setOnMenuItemClickListener { confirmNewSession(); true }
         popup.show()
     }
@@ -1950,9 +1982,9 @@ class MainActivity : Activity() {
     private fun showSessionDialog() {
         val options = arrayOf(
             "Guardar copia en la aplicación",
-            "Abrir sesión guardada en la aplicación",
+            "Ver sesiones recientes",
             "Guardar como archivo…",
-            "Abrir archivo de sesión…",
+            "Abrir sesión desde archivo…",
             "Crear sesión nueva"
         )
         AlertDialog.Builder(this)
@@ -1993,17 +2025,18 @@ class MainActivity : Activity() {
         }?.sortedByDescending { it.lastModified() }.orEmpty()
         if (files.isEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("Sesiones guardadas")
+                .setTitle("Sesiones recientes")
                 .setMessage("Todavía no hay sesiones guardadas en Documentos/BVstoryboarder/Sessions.")
                 .setPositiveButton("Aceptar", null)
                 .show()
             return
         }
+        val dateFormat = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
         val labels = files.map { file ->
-            file.nameWithoutExtension
+            "${file.nameWithoutExtension}  ·  ${dateFormat.format(java.util.Date(file.lastModified()))}"
         }.toTypedArray()
         AlertDialog.Builder(this)
-            .setTitle("Abrir sesión")
+            .setTitle("Sesiones recientes")
             .setItems(labels) { _, which ->
                 try {
                     saveSession(showMessage = false)
@@ -2043,7 +2076,20 @@ class MainActivity : Activity() {
     }
 
     private fun openSessionFile() {
-        showLocalSessionsDialog()
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                "application/octet-stream", "application/json", "text/plain", "application/x-json"
+            ))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(intent, REQUEST_SESSION)
+        } catch (e: Exception) {
+            setStatus("No se pudo abrir el selector de archivos: ${e.message}")
+            Toast.makeText(this, "No se pudo abrir el selector de archivos", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun confirmNewSession() {
@@ -2882,7 +2928,12 @@ private data class Stroke(
 )
 
 class DrawingView(context: android.content.Context) : View(context) {
-    private data class StrokeRegionSnapshot(val bounds: Rect, val pixels: Bitmap)
+    private data class StrokeRegionSnapshot(
+        val frameIndex: Int,
+        val bounds: Rect,
+        val pixels: Bitmap,
+        val timestamp: Long = SystemClock.uptimeMillis()
+    )
     private val strokeUndoSnapshots = mutableMapOf<Int, MutableList<StrokeRegionSnapshot>>()
     private val strokeRedoSnapshots = mutableMapOf<Int, MutableList<StrokeRegionSnapshot>>()
 
@@ -2932,25 +2983,38 @@ class DrawingView(context: android.content.Context) : View(context) {
         val bottom = (kotlin.math.ceil(bounds.bottom).toInt() + pad).coerceIn(0, target.height)
         if (right <= left || bottom <= top) return null
         val rect = Rect(left, top, right, bottom)
-        return StrokeRegionSnapshot(rect, Bitmap.createBitmap(target, left, top, rect.width(), rect.height()))
+        return StrokeRegionSnapshot(frame, rect, Bitmap.createBitmap(target, left, top, rect.width(), rect.height()))
     }
 
     fun undoStroke(): Boolean = restoreStrokeRegion(strokeUndoSnapshots, strokeRedoSnapshots)
     fun redoStroke(): Boolean = restoreStrokeRegion(strokeRedoSnapshots, strokeUndoSnapshots)
 
+    private fun clearAllStrokeRedoHistory() {
+        strokeRedoSnapshots.values.flatten().forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeRedoSnapshots.clear()
+    }
+
     private fun restoreStrokeRegion(
         source: MutableMap<Int, MutableList<StrokeRegionSnapshot>>,
         destination: MutableMap<Int, MutableList<StrokeRegionSnapshot>>
     ): Boolean {
-        val stack = source[frame] ?: return false
-        if (stack.isEmpty()) return false
-        val snapshot = stack.removeAt(stack.lastIndex)
-        val target = bitmapFor(frame)
+        val latest = source.entries
+            .asSequence()
+            .flatMap { (frameIndex, snapshots) -> snapshots.asSequence().map { frameIndex to it } }
+            .maxByOrNull { it.second.timestamp } ?: return false
+        val frameIndex = latest.first
+        val snapshot = latest.second
+        val stack = source[frameIndex] ?: return false
+        if (!stack.remove(snapshot)) return false
+        if (stack.isEmpty()) source.remove(frameIndex)
+        val target = bitmapFor(frameIndex)
         val after = Bitmap.createBitmap(target, snapshot.bounds.left, snapshot.bounds.top,
             snapshot.bounds.width(), snapshot.bounds.height())
         Canvas(target).drawBitmap(snapshot.pixels, snapshot.bounds.left.toFloat(), snapshot.bounds.top.toFloat(), Paint(Paint.FILTER_BITMAP_FLAG))
         if (!snapshot.pixels.isRecycled) snapshot.pixels.recycle()
-        destination.getOrPut(frame) { mutableListOf() }.add(StrokeRegionSnapshot(snapshot.bounds, after))
+        destination.getOrPut(frameIndex) { mutableListOf() }.add(
+            StrokeRegionSnapshot(frameIndex, snapshot.bounds, after, SystemClock.uptimeMillis())
+        )
         trimStrokeHistoryMemory()
         invalidate()
         onChanged?.invoke()
@@ -2960,6 +3024,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
+    var onNewStroke: (() -> Unit)? = null
     // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     // Only the visible frame remains decoded in RAM. Inactive frames are stored as
@@ -4195,7 +4260,8 @@ class DrawingView(context: android.content.Context) : View(context) {
                         while (stack.size > 20) stack.removeAt(0).pixels.recycle()
                         trimStrokeHistoryMemory()
                     }
-                    strokeRedoSnapshots.remove(frame)?.forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+                    clearAllStrokeRedoHistory()
+                    onNewStroke?.invoke()
                     // Commit the exact bitmap used for the live preview.
                     // Re-rasterizing the point list here caused a visible shape/width jump
                     // and a long pause on dense stylus strokes.
