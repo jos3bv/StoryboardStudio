@@ -657,7 +657,7 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, 0, 0, 0)
+            setPadding(0, 4, 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -704,7 +704,7 @@ class MainActivity : Activity() {
         addIconCompactButton(playback, "ic_previous_frame", "Plano anterior") {
             stopPlayback(); selectFrame((currentFrame - 1).coerceAtLeast(0), true)
         }
-        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 28) { toggleAudio() }
+        playPauseButton = addIconCompactButton(playback, "ic_play", "Reproducir o pausar", sizeDp = 40) { toggleAudio() }
         addIconCompactButton(playback, "ic_next_frame", "Plano siguiente") {
             stopPlayback(); selectFrame((currentFrame + 1).coerceAtMost(frameDurations.lastIndex), true)
         }
