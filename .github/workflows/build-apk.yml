@@ -24,12 +24,11 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          # This action splits the input on spaces, not newlines.
+          # Keep every SDK package on this single line.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -42,8 +41,10 @@ jobs:
           set -euo pipefail
           java -version
           gradle --version
+          sdkmanager --list_installed
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
+          test -d "$ANDROID_HOME/platform-tools"
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
