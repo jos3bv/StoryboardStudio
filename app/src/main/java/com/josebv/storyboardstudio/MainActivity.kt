@@ -4,6 +4,7 @@ package com.josebv.storyboardstudio
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
 import android.content.ContentValues
 import android.content.pm.ActivityInfo
@@ -87,6 +88,7 @@ class MainActivity : Activity() {
     private var fullscreenTimeline: View? = null
     private var fullscreenSliderRail: View? = null
     private var showPanelsButton: Button? = null
+    private var stylusSideButtonDown = false
 
     private val frameDurations = mutableListOf(3000)
     private var currentFrame = 0
@@ -160,6 +162,25 @@ class MainActivity : Activity() {
             }
             handler.postDelayed(this, 35)
         }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val actionIndex = event.actionIndex.coerceIn(0, max(0, event.pointerCount - 1))
+        val toolType = if (event.pointerCount > 0) event.getToolType(actionIndex) else MotionEvent.TOOL_TYPE_UNKNOWN
+        val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+        val sideButtonMask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY
+        val sideButtonDown = isStylus && (event.buttonState and sideButtonMask) != 0
+        if (sideButtonDown && !stylusSideButtonDown &&
+            (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE || event.actionMasked == MotionEvent.ACTION_HOVER_MOVE)) {
+            if (::drawing.isInitialized) {
+                drawing.setEraser(!drawing.isEraser())
+                updateActiveToolButton()
+                brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+                scheduleAutosave()
+            }
+        }
+        stylusSideButtonDown = sideButtonDown
+        return super.dispatchTouchEvent(event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -642,7 +663,7 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
-                leftMargin = -dp(6)
+                leftMargin = dp(8)
                 topMargin = 0
                 rightMargin = 0
                 bottomMargin = 0
@@ -680,7 +701,7 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, 12, 0, 2)
+            setPadding(0, dp(10), 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -828,7 +849,7 @@ class MainActivity : Activity() {
             projectLabel = projectName
         }
         timelineScroll.addView(timelineView, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, dp(112)
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
@@ -865,7 +886,11 @@ class MainActivity : Activity() {
         fullscreenHeader?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenSidebar?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenTimeline?.visibility = if (enabled) View.GONE else View.VISIBLE
-        fullscreenSliderRail?.visibility = if (enabled) View.VISIBLE else View.GONE
+        fullscreenSliderRail?.visibility = View.VISIBLE
+        (fullscreenSliderRail?.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+            params.leftMargin = if (enabled) 0 else dp(8)
+            fullscreenSliderRail?.layoutParams = params
+        }
         showPanelsButton?.visibility = View.VISIBLE
         showPanelsButton?.contentDescription = if (enabled) "Mostrar paneles" else "Pantalla completa"
         showPanelsButton?.let { CanvasFullscreenControls.updateToggleIcon(this, it, enabled) }
@@ -1559,8 +1584,7 @@ class MainActivity : Activity() {
         return blocks
     }
 
-    private fun importSrtAsNewSession(displayName: String, source: String) {
-        val blocks = parseSrtBlocks(source)
+    private fun importSrtAsNewSession(displayName: String, blocks: List<SrtBlock>) {
         if (blocks.isEmpty()) throw IllegalArgumentException("No se encontraron bloques con tiempos y textos válidos")
 
         // Preserve the session currently open before replacing the workspace.
@@ -1601,6 +1625,30 @@ class MainActivity : Activity() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         }
+
+    private fun showImportLoading(): Dialog {
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(128, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+        }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
+        }
+        overlay.addView(progress, FrameLayout.LayoutParams(dp(220), dp(6), Gravity.CENTER))
+        return Dialog(this).apply {
+            setContentView(overlay)
+            setCancelable(false)
+            window?.setBackgroundDrawableResource(android.R.color.transparent)
+            window?.setDimAmount(0f)
+            window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            show()
+            window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+    }
 
     private fun chooseAudio() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -1645,53 +1693,77 @@ class MainActivity : Activity() {
                 }
             }
             REQUEST_SRT -> {
-                try {
-                    val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Importado.srt"
-                    val srtText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                        ?: throw IllegalArgumentException("No se pudo leer el archivo SRT")
-                    importSrtAsNewSession(displayName, srtText)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "No se pudo importar el SRT: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-            REQUEST_IMAGE -> {
-                try {
-                    if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-                        // Some document providers grant temporary read access but do not
-                        // support persistable grants. That must not block the import itself.
-                        try {
-                            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        } catch (_: SecurityException) {
-                            // Continue while the activity's temporary URI grant is valid.
-                        } catch (_: UnsupportedOperationException) {
-                            // Provider does not implement persistable permissions.
+                val loading = showImportLoading()
+                Thread {
+                    try {
+                        val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Importado.srt"
+                        val srtText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                            ?: throw IllegalArgumentException("No se pudo leer el archivo SRT")
+                        val parsedBlocks = parseSrtBlocks(srtText)
+                        runOnUiThread {
+                            try {
+                                importSrtAsNewSession(displayName, parsedBlocks)
+                            } catch (e: Exception) {
+                                Toast.makeText(this, "No se pudo importar el SRT: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                loading.dismiss()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            loading.dismiss()
+                            Toast.makeText(this, "No se pudo importar el SRT: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    contentResolver.openInputStream(uri).use { stream ->
-                        BitmapFactory.decodeStream(stream, null, bounds)
+                }.start()
+            }
+            REQUEST_IMAGE -> {
+                if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    } catch (_: SecurityException) {
+                    } catch (_: UnsupportedOperationException) {
                     }
-                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                        throw IllegalArgumentException("No se pudieron leer las dimensiones de la imagen")
-                    }
-                    val fitScale = min(1920f / bounds.outWidth, 1080f / bounds.outHeight)
-                    val decodeWidth = max(1, (bounds.outWidth * fitScale).toInt())
-                    val decodeHeight = max(1, (bounds.outHeight * fitScale).toInt())
-                    val sample = calculateInSampleSize(bounds.outWidth, bounds.outHeight, decodeWidth, decodeHeight)
-                    val options = BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                        inScaled = false
-                    }
-                    val bitmap = contentResolver.openInputStream(uri).use { stream ->
-                        BitmapFactory.decodeStream(stream, null, options)
-                    } ?: throw IllegalArgumentException("Formato de imagen no compatible")
-                    drawing.addImportedImage(bitmap)
-                    scheduleAutosave()
-                    Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) {
-                    Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
                 }
+                val loading = showImportLoading()
+                Thread {
+                    try {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        contentResolver.openInputStream(uri).use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
+                        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                            throw IllegalArgumentException("No se pudieron leer las dimensiones de la imagen")
+                        }
+                        val fitScale = min(1920f / bounds.outWidth, 1080f / bounds.outHeight)
+                        val decodeWidth = max(1, (bounds.outWidth * fitScale).toInt())
+                        val decodeHeight = max(1, (bounds.outHeight * fitScale).toInt())
+                        val sample = calculateInSampleSize(bounds.outWidth, bounds.outHeight, decodeWidth, decodeHeight)
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = sample
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                            inScaled = false
+                        }
+                        val bitmap = contentResolver.openInputStream(uri).use { stream ->
+                            BitmapFactory.decodeStream(stream, null, options)
+                        } ?: throw IllegalArgumentException("Formato de imagen no compatible")
+                        runOnUiThread {
+                            try {
+                                drawing.addImportedImage(bitmap)
+                                scheduleAutosave()
+                                Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                bitmap.recycle()
+                                Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                loading.dismiss()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            loading.dismiss()
+                            Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
             }
             101 -> {
                 try {
@@ -2373,7 +2445,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val cardsTop = 29f * density
     private val cardHeight = 34f * density
     private val audioTop = 69f * density
-    private val audioHeight = 33f * density
+    private val audioHeight = 49f * density
     private val handleWidth = 13f * density
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
