@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.49 - unified wet-stroke preview/commit, white canvas and timeline button inset.
+// BV'Storyboarder 0.9.51 - active-frame bitmap store, sampled image import and disk-backed history.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -85,13 +85,36 @@ class MainActivity : Activity() {
     private var projectName = "Mi storyboard"
     private lateinit var projectTitleLabel: TextView
     private var updatingFromPlayback = false
-    private val undoHistory = ArrayDeque<String>()
-    private val redoHistory = ArrayDeque<String>()
+    private val historyDirectory by lazy { File(cacheDir, "storyboard_history").apply { mkdirs() } }
+    private val undoHistory = ArrayDeque<File>()
+    private val redoHistory = ArrayDeque<File>()
     private var restoringHistory = false
     private var lastHistoryState: String? = null
+    private var historyFileCounter = 0L
     private val maxHistorySteps = 10
 
+    private fun storeHistoryState(state: String): File {
+        val file = File(historyDirectory, "history_${SystemClock.uptimeMillis()}_${historyFileCounter++}.json")
+        file.writeText(state, Charsets.UTF_8)
+        return file
+    }
+
+    private fun readHistoryState(file: File): String = file.readText(Charsets.UTF_8)
+
+    private fun trimHistory(queue: ArrayDeque<File>) {
+        while (queue.size > maxHistorySteps) queue.removeFirst().delete()
+    }
+
+    private fun clearHistoryFiles(queue: ArrayDeque<File>) {
+        while (queue.isNotEmpty()) queue.removeFirst().delete()
+    }
+
     private val handler = Handler(Looper.getMainLooper())
+    private val historyRecordRunnable = Runnable {
+        if (!restoringHistory && !isFinishing && !isDestroyed && ::drawing.isInitialized) {
+            recordHistory()
+        }
+    }
     private val playbackUpdater = object : Runnable {
         override fun run() {
             val player = mediaPlayer
@@ -161,7 +184,10 @@ class MainActivity : Activity() {
                 scheduleAutosave()
             }
             onHistoryAction = {
-                if (!restoringHistory) recordHistory()
+                if (!restoringHistory) {
+                    handler.removeCallbacks(historyRecordRunnable)
+                    handler.postDelayed(historyRecordRunnable, 650)
+                }
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
         }
@@ -1105,8 +1131,9 @@ class MainActivity : Activity() {
     }
 
     private fun resetHistory() {
-        undoHistory.clear()
-        redoHistory.clear()
+        clearHistoryFiles(undoHistory)
+        clearHistoryFiles(redoHistory)
+        historyDirectory.listFiles()?.forEach { it.delete() }
         lastHistoryState = historySnapshot()
     }
 
@@ -1119,9 +1146,9 @@ class MainActivity : Activity() {
             return
         }
         if (state == previous) return
-        undoHistory.addLast(previous)
-        while (undoHistory.size > maxHistorySteps) undoHistory.removeFirst()
-        redoHistory.clear()
+        undoHistory.addLast(storeHistoryState(previous))
+        trimHistory(undoHistory)
+        clearHistoryFiles(redoHistory)
         lastHistoryState = state
     }
 
@@ -1168,19 +1195,27 @@ class MainActivity : Activity() {
     }
 
     private fun undoGlobal() {
+        handler.removeCallbacks(historyRecordRunnable)
+        recordHistory()
         if (undoHistory.isEmpty()) return
         val current = historySnapshot()
-        redoHistory.addLast(current)
-        while (redoHistory.size > maxHistorySteps) redoHistory.removeFirst()
-        restoreHistoryState(undoHistory.removeLast())
+        redoHistory.addLast(storeHistoryState(current))
+        trimHistory(redoHistory)
+        val file = undoHistory.removeLast()
+        val state = try { readHistoryState(file) } finally { file.delete() }
+        restoreHistoryState(state)
     }
 
     private fun redoGlobal() {
+        handler.removeCallbacks(historyRecordRunnable)
+        recordHistory()
         if (redoHistory.isEmpty()) return
         val current = historySnapshot()
-        undoHistory.addLast(current)
-        while (undoHistory.size > maxHistorySteps) undoHistory.removeFirst()
-        restoreHistoryState(redoHistory.removeLast())
+        undoHistory.addLast(storeHistoryState(current))
+        trimHistory(undoHistory)
+        val file = redoHistory.removeLast()
+        val state = try { readHistoryState(file) } finally { file.delete() }
+        restoreHistoryState(state)
     }
 
     private fun updateTimeline() {
@@ -1365,6 +1400,18 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_IMAGE)
     }
 
+    private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+        var sample = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while (halfHeight / sample >= reqHeight && halfWidth / sample >= reqWidth) {
+                sample *= 2
+            }
+        }
+        return sample.coerceAtLeast(1)
+    }
+
     private fun chooseSrt() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -1483,13 +1530,28 @@ class MainActivity : Activity() {
                     if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
                         contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     contentResolver.openInputStream(uri).use { stream ->
-                        val bitmap = BitmapFactory.decodeStream(stream)
-                            ?: throw IllegalArgumentException("Formato de imagen no compatible")
-                        drawing.addImportedImage(bitmap)
-                        scheduleAutosave()
-                        Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
+                        BitmapFactory.decodeStream(stream, null, bounds)
                     }
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                        throw IllegalArgumentException("No se pudieron leer las dimensiones de la imagen")
+                    }
+                    val fitScale = min(1920f / bounds.outWidth, 1080f / bounds.outHeight)
+                    val decodeWidth = max(1, (bounds.outWidth * fitScale).toInt())
+                    val decodeHeight = max(1, (bounds.outHeight * fitScale).toInt())
+                    val sample = calculateInSampleSize(bounds.outWidth, bounds.outHeight, decodeWidth, decodeHeight)
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                        inScaled = false
+                    }
+                    val bitmap = contentResolver.openInputStream(uri).use { stream ->
+                        BitmapFactory.decodeStream(stream, null, options)
+                    } ?: throw IllegalArgumentException("Formato de imagen no compatible")
+                    drawing.addImportedImage(bitmap)
+                    scheduleAutosave()
+                    Toast.makeText(this, "Imagen incorporada al plano", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -1700,7 +1762,7 @@ class MainActivity : Activity() {
     private fun scheduleAutosave() {
         if (restoringSession) return
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 500)
+        handler.postDelayed(autosaveRunnable, 1800)
     }
 
     private val autosaveRunnable = object : Runnable {
@@ -2106,7 +2168,6 @@ class MainActivity : Activity() {
         super.onTrimMemory(level)
         if (::drawing.isInitialized && level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             drawing.releaseCachedBitmaps()
-            drawing.invalidate()
         }
     }
 
@@ -2118,6 +2179,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         saveSession(showMessage = false)
         if (::drawing.isInitialized) drawing.releaseCachedBitmaps()
+        clearHistoryFiles(undoHistory)
+        clearHistoryFiles(redoHistory)
         stopPlayback()
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
@@ -2764,13 +2827,14 @@ private data class Stroke(
 class DrawingView(context: android.content.Context) : View(context) {
     private data class ClearSnapshot(
         val strokes: List<Stroke>,
-        val image: Bitmap?
+        val imagePng: ByteArray?
     )
 
     private val clearUndoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
     private val clearRedoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
 
     init {
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         setBackgroundColor(Color.TRANSPARENT)
     }
 
@@ -2779,11 +2843,83 @@ class DrawingView(context: android.content.Context) : View(context) {
     var onColorUsed: ((Int) -> Unit)? = null
     // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
-    // Authoritative artwork: exactly one transparent RGBA bitmap per storyboard frame.
-    // Legacy Stroke/importedImage structures are accepted only while decoding old projects.
+    // Only the visible frame remains decoded in RAM. Inactive frames are stored as
+    // PNG files in the app cache and decoded on demand when the user visits them.
     private val frameBitmaps = mutableMapOf<Int, Bitmap>()
-    private fun bitmapFor(index: Int = frame): Bitmap = frameBitmaps.getOrPut(index) {
-        Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+    private val frameBitmapFiles = mutableMapOf<Int, File>()
+    private val frameBitmapDirectory = File(context.filesDir, "storyboard_frame_cache").apply { mkdirs() }
+
+    private fun frameFile(index: Int): File = frameBitmapFiles.getOrPut(index) {
+        File(frameBitmapDirectory, "frame_${java.util.UUID.randomUUID()}.png")
+    }
+
+    private fun spillFrameBitmap(index: Int) {
+        val bitmap = frameBitmaps[index] ?: return
+        if (bitmap.isRecycled) {
+            frameBitmaps.remove(index)
+            return
+        }
+        val target = frameFile(index)
+        val temp = File(target.parentFile, target.name + ".tmp")
+        val saved = try {
+            FileOutputStream(temp).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    throw java.io.IOException("No se pudo comprimir el plano ${index + 1}")
+                }
+                out.flush()
+            }
+            if (target.exists()) target.delete()
+            temp.renameTo(target) || temp.copyTo(target, overwrite = true).let { temp.delete(); true }
+        } catch (_: Exception) {
+            temp.delete()
+            false
+        }
+        if (saved) {
+            frameBitmaps.remove(index)
+            bitmap.recycle()
+        }
+    }
+
+    private fun spillInactiveFrameBitmaps(keepIndex: Int) {
+        frameBitmaps.keys.toList().filter { it != keepIndex }.forEach { spillFrameBitmap(it) }
+    }
+
+    private fun bitmapFor(index: Int = frame): Bitmap {
+        frameBitmaps[index]?.let { if (!it.isRecycled) return it }
+        spillInactiveFrameBitmaps(index)
+        val file = frameBitmapFiles[index]
+        val loaded = if (file != null && file.isFile && file.length() > 0L) {
+            try { BitmapFactory.decodeFile(file.absolutePath) } catch (_: Exception) { null }
+        } else null
+        val bitmap = if (loaded != null) {
+            if (loaded.width == 1920 && loaded.height == 1080 && loaded.config == Bitmap.Config.ARGB_8888) {
+                loaded
+            } else {
+                val normalized = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+                Canvas(normalized).drawBitmap(
+                    loaded, null, Rect(0, 0, 1920, 1080),
+                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                )
+                if (!loaded.isRecycled) loaded.recycle()
+                normalized
+            }
+        } else {
+            Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+        }
+        frameBitmaps[index] = bitmap
+        return bitmap
+    }
+
+    private fun deleteStoredFrame(index: Int) {
+        frameBitmapFiles.remove(index)?.let { if (it.exists()) it.delete() }
+        frameBitmaps.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+    }
+
+    private fun shiftStoredFrameFiles(mapIndex: (Int) -> Int?) {
+        val moved = mutableMapOf<Int, File>()
+        frameBitmapFiles.forEach { (old, file) -> mapIndex(old)?.let { moved[it] = file } ?: file.delete() }
+        frameBitmapFiles.clear()
+        frameBitmapFiles.putAll(moved)
     }
     private fun rasterizeStroke(target: Bitmap, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
@@ -2937,6 +3073,8 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun releaseCachedBitmaps() {
         invalidateAllFrameCaches()
+        spillInactiveFrameBitmaps(-1)
+        frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
         encodedImageCache.clear()
         decodedImageCache.clear()
         inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
@@ -3091,11 +3229,21 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun strokes() = frames.getOrPut(frame) { mutableListOf() }
-    fun setFrame(index: Int) { cancelSelection(); frame = index; invalidate() }
+    fun setFrame(index: Int) {
+        if (index == frame) { bitmapFor(index); invalidate(); return }
+        cancelSelection()
+        spillFrameBitmap(frame)
+        frame = index
+        bitmapFor(frame)
+        invalidate()
+    }
     fun clearProject() {
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
+        frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
+        frameBitmapFiles.clear()
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         redoFrames.clear()
         clearUndoSnapshots.clear()
         clearRedoSnapshots.clear()
@@ -3137,6 +3285,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val left=(maxW-w)/2f; val top=(maxH-h)/2f
         Canvas(bitmapFor()).drawBitmap(fitted, null, RectF(left, top, left+w, top+h), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         if (fitted !== bitmap && !fitted.isRecycled) fitted.recycle()
+        if (!bitmap.isRecycled) bitmap.recycle()
         invalidateFrameCache(); invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
@@ -3166,8 +3315,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (!clearStack.isNullOrEmpty()) {
             val snapshot = clearStack.removeAt(clearStack.lastIndex)
             frames[frame] = snapshot.strokes.toMutableList()
-            if (snapshot.image != null) importedImages[frame] = snapshot.image
-            else importedImages.remove(frame)
+            if (snapshot.imagePng != null) {
+                BitmapFactory.decodeByteArray(snapshot.imagePng, 0, snapshot.imagePng.size)?.let { frameBitmaps[frame] = it }
+            } else importedImages.remove(frame)
             val clearRedo = clearRedoSnapshots.getOrPut(frame) { mutableListOf() }
             clearRedo.add(snapshot)
             while (clearRedo.size > 10) clearRedo.removeAt(0)
@@ -3193,6 +3343,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
             clearUndo.add(snapshot)
             while (clearUndo.size > 10) clearUndo.removeAt(0)
+            deleteStoredFrame(frame)
             frames.remove(frame)
             importedImages.remove(frame)
             invalidateFrameCache()
@@ -3203,16 +3354,20 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun clear() {
         bakeLegacyFrame(frame)
-        val existingBitmap = frameBitmaps[frame]
+        val existingBitmap = bitmapFor(frame)
         if (existingBitmap == null || existingBitmap.isRecycled) return
 
-        val snapshot = ClearSnapshot(emptyList(), existingBitmap.copy(Bitmap.Config.ARGB_8888, true))
+        val snapshotBytes = java.io.ByteArrayOutputStream().use { out ->
+            existingBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }
+        val snapshot = ClearSnapshot(emptyList(), snapshotBytes)
         val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
         clearUndo.add(snapshot)
         while (clearUndo.size > 10) clearUndo.removeAt(0)
         clearRedoSnapshots.remove(frame)
 
-        frameBitmaps.remove(frame)?.let { if (!it.isRecycled) it.eraseColor(Color.TRANSPARENT) }
+        deleteStoredFrame(frame)
         redoFrames.remove(frame)
         frames.remove(frame)
         importedImages.remove(frame)
@@ -3242,7 +3397,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun duplicateFrame(source: Int, target: Int) {
         invalidateAllFrameCaches()
         bakeLegacyFrame(source)
-        val sourceBitmap = frameBitmaps[source]?.copy(Bitmap.Config.ARGB_8888, true)
+        val sourceBitmap = bitmapFor(source).copy(Bitmap.Config.ARGB_8888, true)
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.take(1)?.toMutableList()
         val sourceNoteColor = noteColors[source]
@@ -3269,6 +3424,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear()
         frames.putAll(newFrames)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>=at) k+1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
+        shiftStoredFrameFiles { old -> if (old >= at) old + 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> shiftedImages[if(k>=at) k+1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
@@ -3286,8 +3442,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.forEach { (key, value) -> if (key != index) newFrames[if (key > index) key - 1 else key] = value }
         frames.clear()
         frames.putAll(newFrames)
-        frameBitmaps.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+        deleteStoredFrame(index)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>index) k-1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
+        shiftStoredFrameFiles { old -> if (old == index) null else if (old > index) old - 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> if(k!=index) shiftedImages[if(k>index) k-1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
@@ -3303,7 +3460,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun moveFrame(from: Int, to: Int) {
         invalidateAllFrameCaches()
         if (from == to) return
-        val allKeys = (frames.keys + notes.keys + importedImages.keys).toSet()
+        val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + notes.keys + importedImages.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         allKeys.forEach { old ->
@@ -3318,6 +3475,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         frames.clear(); frames.putAll(newFrames)
         val movedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (old,bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedBitmaps[new]=bmp }; frameBitmaps.clear(); frameBitmaps.putAll(movedBitmaps)
+        shiftStoredFrameFiles { old -> when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old } }
         val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
         val movedNoteColors = mutableMapOf<Int, Int>()
@@ -3383,7 +3541,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
         }
         drawNote(canvas, frame)
-        val layer = canvas.saveLayer(boardBounds, null)
+        val layer = canvas.save()
         if (selectedPixels != null) {
             canvas.save()
             canvas.translate(selectionTranslateX, selectionTranslateY)
@@ -4012,18 +4170,19 @@ class DrawingView(context: android.content.Context) : View(context) {
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
-        val indices = (frameBitmaps.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
+        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
         indices.forEach { index ->
             val frameObject = JSONObject()
             frameObject.put("index", index)
             bakeLegacyFrame(index)
-            val bitmap = frameBitmaps[index]
-            if (bitmap != null && !bitmap.isRecycled) {
+            val bitmap = bitmapFor(index)
+            if (!bitmap.isRecycled) {
                 val bytes = java.io.ByteArrayOutputStream().use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                     out.toByteArray()
                 }
                 frameObject.put("bitmap", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                if (index != frame) spillFrameBitmap(index)
             }
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
@@ -4032,14 +4191,19 @@ class DrawingView(context: android.content.Context) : View(context) {
             frameArray.put(frameObject)
         }
         root.put("frames", frameArray)
+        bitmapFor(frame)
         return root
     }
 
     fun loadJson(root: JSONObject) {
         invalidateAllFrameCaches()
+        frame = 0
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
+        frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
+        frameBitmapFiles.clear()
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         redoFrames.clear()
         clearUndoSnapshots.clear()
         clearRedoSnapshots.clear()
@@ -4099,11 +4263,19 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
                 val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (decoded != null) {
-                    val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) decoded else Bitmap.createScaledBitmap(decoded, 1920, 1080, true)
+                    val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
+                        decoded
+                    } else {
+                        Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
+                            Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
+                                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                            if (!decoded.isRecycled) decoded.recycle()
+                        }
+                    }
                     frameBitmaps[index] = normalized
-                    if (normalized !== decoded && !decoded.isRecycled) decoded.recycle()
                     frames.remove(index)
                     importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+                    if (index != frame) spillFrameBitmap(index)
                 }
             } catch (_: Exception) { }
             if (!frameBitmaps.containsKey(index)) bakeLegacyFrame(index)
@@ -4113,12 +4285,18 @@ class DrawingView(context: android.content.Context) : View(context) {
                 noteColors[index] = frameObject.optInt("noteColor", Color.DKGRAY)
             }
         }
+        bitmapFor(frame)
         invalidate()
     }
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
-        frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
+        val frameBitmap = bitmapFor(index)
+        canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (index != frame) {
+            spillFrameBitmap(index)
+            bitmapFor(frame)
+        }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
             textPaint.color = Color.RED
@@ -4147,7 +4325,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         bakeLegacyFrame(index)
-        frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
+        val frameBitmap = bitmapFor(index)
+        canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (index != frame) {
+            spillFrameBitmap(index)
+            bitmapFor(frame)
+        }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
             textPaint.color = Color.RED
