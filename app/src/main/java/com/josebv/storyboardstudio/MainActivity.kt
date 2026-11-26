@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.59 - unified chronological undo/redo history.
+// BV'Storyboarder 0.9.72 - clean session archive and temporary undo history.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -35,7 +35,16 @@ import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.io.InputStreamReader
+import java.io.ByteArrayInputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import java.util.zip.Deflater
 import android.util.Base64
+import android.util.Base64InputStream
+import android.util.JsonReader
+import android.util.JsonToken
 import java.nio.ByteOrder
 import kotlin.math.roundToInt
 import kotlin.math.abs
@@ -100,34 +109,34 @@ class MainActivity : Activity() {
     private val redoHistory = ArrayDeque<File>()
     private var restoringHistory = false
     private var lastHistoryStateFile: File? = null
+    private var activeSessionAssetDirectory: File? = null
     private var historyFileCounter = 0L
-    private val maxHistorySteps = 8
-    // History is temporary and bounded by both step count and disk footprint.
-    private val maxHistoryBytes = 64L * 1024L * 1024L
+    private val maxHistorySteps = 4
+    private val maxHistoryBytes = 128L * 1024L * 1024L
 
-    private fun storeHistoryState(state: String): File {
-        val file = File(historyDirectory, "history_${SystemClock.uptimeMillis()}_${historyFileCounter++}.json")
-        file.writeText(state, Charsets.UTF_8)
-        return file
-    }
-
-    private fun readHistoryState(file: File): String = file.readText(Charsets.UTF_8)
-
-    private fun historyMatchesFile(state: String, file: File): Boolean {
-        if (!file.isFile) return false
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val count = input.read(buffer)
-                if (count <= 0) break
-                digest.update(buffer, 0, count)
-            }
+    /** History checkpoints are ZIP streams of a small manifest plus PNG files.
+     *  No full-project Base64 strings are created in memory. */
+    private fun storeHistoryState(): File {
+        if (!historyDirectory.exists()) historyDirectory.mkdirs()
+        val file = File(historyDirectory, "history_${SystemClock.uptimeMillis()}_${historyFileCounter++}.zip")
+        val temp = File(historyDirectory, file.name + ".writing")
+        val manifest = JSONObject()
+        val durations = JSONArray()
+        frameDurations.forEach { durations.put(it) }
+        manifest.put("durations", durations)
+        manifest.put("drawing", drawing.toJson(includeBitmapData = false))
+        ZipOutputStream(FileOutputStream(temp).buffered()).use { zip ->
+            zip.setLevel(Deflater.BEST_SPEED)
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            drawing.writeFramePngEntries(zip)
         }
-        val previousHash = digest.digest()
-        val currentHash = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(state.toByteArray(Charsets.UTF_8))
-        return previousHash.contentEquals(currentHash)
+        if (!temp.renameTo(file)) {
+            temp.delete()
+            throw java.io.IOException("No se pudo finalizar el punto de historial")
+        }
+        return file
     }
 
     private fun trimHistory(queue: ArrayDeque<File>) {
@@ -139,18 +148,174 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun clearHistoryFiles(queue: ArrayDeque<File>) {
+        while (queue.isNotEmpty()) queue.removeFirst().delete()
+    }
+
     private fun clearStaleHistoryFiles() {
-        // A process killed by Android may not receive onDestroy(). History is never
-        // restored across launches, so discard leftovers before loading a project.
+        try { historyDirectory.listFiles()?.forEach { it.delete() } }
+        catch (e: Exception) { android.util.Log.w("StoryboardStudio", "Could not clear temporary history", e) }
+    }
+
+    private fun extractArchive(archive: File): Pair<JSONObject, File> {
+        val directory = File(cacheDir, "session_unpack_${SystemClock.uptimeMillis()}").apply {
+            deleteRecursively(); mkdirs()
+        }
+        var manifest: JSONObject? = null
         try {
-            historyDirectory.listFiles()?.forEach { it.delete() }
+            ZipInputStream(archive.inputStream().buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val name = entry.name.replace('\\', '/')
+                    if (name.startsWith("/") || name.split('/').any { it == ".." }) {
+                        throw IllegalArgumentException("El archivo de sesión contiene una ruta inválida")
+                    }
+                    val out = File(directory, name)
+                    if (entry.isDirectory) out.mkdirs() else {
+                        out.parentFile?.mkdirs()
+                        if (name == "manifest.json") {
+                            val text = zip.readBytes().toString(Charsets.UTF_8)
+                            manifest = JSONObject(text)
+                        } else {
+                            FileOutputStream(out).use { target -> zip.copyTo(target, 64 * 1024) }
+                        }
+                    }
+                    zip.closeEntry()
+                }
+            }
+            return (manifest ?: throw IllegalArgumentException("El archivo no contiene manifest.json")) to directory
         } catch (e: Exception) {
-            android.util.Log.w("StoryboardStudio", "Could not clear temporary undo history", e)
+            directory.deleteRecursively()
+            throw e
         }
     }
 
-    private fun clearHistoryFiles(queue: ArrayDeque<File>) {
-        while (queue.isNotEmpty()) queue.removeFirst().delete()
+    private fun writeProjectArchive(destination: File) {
+        val parent = destination.parentFile ?: throw IllegalStateException("Carpeta de destino inválida")
+        if (!parent.exists() && !parent.mkdirs()) throw IllegalStateException("No se pudo crear la carpeta de guardado")
+        val temp = File(parent, destination.name + ".writing")
+        if (temp.exists()) temp.delete()
+        val manifest = buildSessionJson(includeBitmapData = false)
+        ZipOutputStream(FileOutputStream(temp).buffered()).use { zip ->
+            zip.setLevel(Deflater.BEST_SPEED)
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            drawing.writeFramePngEntries(zip)
+        }
+        val backup = File(parent, destination.name + ".bak")
+        if (backup.exists()) backup.delete()
+        if (destination.exists() && !destination.renameTo(backup)) {
+            temp.delete(); throw java.io.IOException("No se pudo proteger la sesión anterior")
+        }
+        if (!temp.renameTo(destination)) {
+            if (backup.exists()) backup.renameTo(destination)
+            temp.delete()
+            throw java.io.IOException("No se pudo finalizar el guardado")
+        }
+        // Keep one known-good backup; replace it only after the new archive is complete.
+    }
+
+    private fun readJsonValue(reader: JsonReader): Any? = when (reader.peek()) {
+        JsonToken.BEGIN_OBJECT -> {
+            val value = JSONObject(); reader.beginObject()
+            while (reader.hasNext()) value.put(reader.nextName(), readJsonValue(reader))
+            reader.endObject(); value
+        }
+        JsonToken.BEGIN_ARRAY -> {
+            val value = JSONArray(); reader.beginArray()
+            while (reader.hasNext()) value.put(readJsonValue(reader))
+            reader.endArray(); value
+        }
+        JsonToken.STRING -> reader.nextString()
+        JsonToken.NUMBER -> {
+            val number = reader.nextString()
+            if (number.contains('.') || number.contains('e', true)) number.toDoubleOrNull() ?: 0.0
+            else number.toLongOrNull() ?: 0L
+        }
+        JsonToken.BOOLEAN -> reader.nextBoolean()
+        JsonToken.NULL -> { reader.nextNull(); JSONObject.NULL }
+        else -> throw IllegalArgumentException("Contenido JSON inesperado")
+    }
+
+    private fun readLegacyFrameArray(reader: JsonReader, framesDirectory: File): JSONArray {
+        val frames = JSONArray(); reader.beginArray(); var fallbackIndex = 0
+        while (reader.hasNext()) {
+            val frame = JSONObject(); var bitmapPayload: String? = null
+            reader.beginObject()
+            while (reader.hasNext()) {
+                val name = reader.nextName()
+                if (name == "bitmap" && reader.peek() == JsonToken.STRING) bitmapPayload = reader.nextString()
+                else frame.put(name, readJsonValue(reader))
+            }
+            reader.endObject()
+            val index = frame.optInt("index", fallbackIndex)
+            if (!bitmapPayload.isNullOrBlank()) {
+                if (!framesDirectory.exists()) framesDirectory.mkdirs()
+                val bitmapFile = File(framesDirectory, "frame_${index}.png")
+                val encoded = bitmapPayload!!.toByteArray(Charsets.US_ASCII)
+                Base64InputStream(ByteArrayInputStream(encoded), Base64.DEFAULT).use { input ->
+                    FileOutputStream(bitmapFile).use { output -> input.copyTo(output, 64 * 1024) }
+                }
+                frame.put("bitmapEntry", "frames/frame_${index}.png")
+            }
+            frames.put(frame); fallbackIndex++
+        }
+        reader.endArray(); return frames
+    }
+
+    private fun readLegacyDrawing(reader: JsonReader, framesDirectory: File): JSONObject {
+        val drawingObject = JSONObject(); reader.beginObject()
+        while (reader.hasNext()) {
+            val name = reader.nextName()
+            if (name == "frames" && reader.peek() == JsonToken.BEGIN_ARRAY) {
+                drawingObject.put("frames", readLegacyFrameArray(reader, framesDirectory))
+            } else drawingObject.put(name, readJsonValue(reader))
+        }
+        reader.endObject(); return drawingObject
+    }
+
+    private fun readLegacySessionFile(file: File): Pair<JSONObject, File> {
+        val unpacked = File(cacheDir, "legacy_session_${SystemClock.uptimeMillis()}").apply { deleteRecursively(); mkdirs() }
+        val framesDirectory = File(unpacked, "frames")
+        val root = JSONObject()
+        try {
+            JsonReader(InputStreamReader(file.inputStream().buffered(), Charsets.UTF_8)).use { reader ->
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val name = reader.nextName()
+                    if (name == "drawing" && reader.peek() == JsonToken.BEGIN_OBJECT) {
+                        root.put("drawing", readLegacyDrawing(reader, framesDirectory))
+                    } else root.put(name, readJsonValue(reader))
+                }
+                reader.endObject()
+            }
+            if (!root.has("drawing") || !root.has("durations")) throw IllegalArgumentException("El archivo no contiene una sesión válida")
+            return root to unpacked
+        } catch (e: Exception) {
+            unpacked.deleteRecursively(); throw e
+        }
+    }
+
+    private fun readSessionPackage(file: File): Pair<JSONObject, File> {
+        val header = ByteArray(4)
+        val count = file.inputStream().use { it.read(header) }
+        return if (count >= 2 && header[0] == 0x50.toByte() && header[1] == 0x4b.toByte()) {
+            extractArchive(file)
+        } else readLegacySessionFile(file)
+    }
+
+    private fun readSessionFile(file: File) {
+        val (root, extracted) = readSessionPackage(file)
+        try { applySessionJson(root, File(extracted, "frames")) }
+        catch (e: Exception) { extracted.deleteRecursively(); throw e }
+    }
+
+    private fun adoptSessionAssets(assetDirectory: File?) {
+        val nextDirectory = assetDirectory?.parentFile
+        val previous = activeSessionAssetDirectory
+        activeSessionAssetDirectory = nextDirectory
+        if (previous != null && previous != nextDirectory) previous.deleteRecursively()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -237,8 +402,10 @@ class MainActivity : Activity() {
     private fun initializeSessionStorage() {
         prepareStorageFolders()
         clearStaleHistoryFiles()
+        cacheDir.listFiles()?.filter {
+            it.isDirectory && (it.name.startsWith("session_unpack_") || it.name.startsWith("legacy_session_"))
+        }?.forEach { it.deleteRecursively() }
         loadSession()
-        resetHistory()
         handler.removeCallbacks(autosaveRunnable)
     }
 
@@ -1249,68 +1416,47 @@ class MainActivity : Activity() {
         if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
-    // Undo/redo stores only editable canvas content and timeline structure.
-    // Tool settings, active tools, selected colors and audio are intentionally excluded.
-    private fun historySnapshot(): String {
-        val drawingState = drawing.toJson()
-        listOf("brushSize", "eraserSize", "hue", "saturation", "value",
-            "brushColor", "brushOpacity", "pressureSensitivity").forEach { drawingState.remove(it) }
-        val snapshot = JSONObject()
-        val durations = JSONArray()
-        frameDurations.forEach { durations.put(it) }
-        snapshot.put("durations", durations)
-        snapshot.put("drawing", drawingState)
-        return snapshot.toString()
-    }
-
-    private fun resetHistory() {
+    // Undo/redo is session-local. Each checkpoint streams PNG assets into a ZIP;
+    // the checkpoint is never persisted as part of the project itself.
+    private fun resetHistory(reuseAutosave: Boolean = true) {
         handler.removeCallbacks(pendingHistoryRunnable)
         historyRecordPending = false
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
         lastHistoryStateFile?.delete()
         historyDirectory.listFiles()?.forEach { it.delete() }
-
-        // The autosave already contains the complete drawing and timeline state.
-        // Reuse it as the initial undo checkpoint instead of calling historySnapshot()
-        // here: that would PNG-encode every frame again during application startup.
-        lastHistoryStateFile = if (sessionFile.isFile && sessionFile.length() > 0L) {
-            val baseline = File(historyDirectory, "history_baseline_${SystemClock.uptimeMillis()}.json")
-            try {
-                sessionFile.copyTo(baseline, overwrite = true)
-                baseline
-            } catch (e: Exception) {
-                android.util.Log.w("StoryboardStudio", "Could not reuse session as undo baseline", e)
-                storeHistoryState(historySnapshot())
-            }
-        } else {
-            // A brand-new empty project has no saved session to reuse.
-            storeHistoryState(historySnapshot())
-        }
+        val baseline = File(historyDirectory, "history_baseline.zip")
+        val isArchive = reuseAutosave && if (sessionFile.isFile && sessionFile.length() > 2L) {
+            sessionFile.inputStream().use { input -> input.read() == 0x50 && input.read() == 0x4b }
+        } else false
+        lastHistoryStateFile = if (isArchive) {
+            try { sessionFile.copyTo(baseline, overwrite = true) }
+            catch (_: Exception) { storeHistoryState() }
+        } else storeHistoryState()
     }
 
     private fun recordHistory() {
         if (restoringHistory || !::drawing.isInitialized) return
         val previous = lastHistoryStateFile
-        val state = historySnapshot()
-        if (previous != null && historyMatchesFile(state, previous)) return
+        val next = try { storeHistoryState() } catch (e: Exception) {
+            setStatus("No se pudo registrar el historial: ${e.message}")
+            return
+        }
         if (previous != null) {
             undoHistory.addLast(previous)
             trimHistory(undoHistory)
         }
         clearHistoryFiles(redoHistory)
-        lastHistoryStateFile = storeHistoryState(state)
+        lastHistoryStateFile = next
     }
 
     private var historyRecordPending = false
     private val pendingHistoryRunnable = Runnable { historyRecordPending = false; recordHistory() }
 
-    // Coalesce rapid consecutive ink strokes so each pen lift does not synchronously
-    // PNG-compress the entire 1920x1080 frame on the UI thread.
     private fun scheduleHistoryRecord() {
         handler.removeCallbacks(pendingHistoryRunnable)
         historyRecordPending = true
-        handler.postDelayed(pendingHistoryRunnable, 350L)
+        handler.postDelayed(pendingHistoryRunnable, 500L)
     }
 
     private fun flushPendingHistory(): Boolean {
@@ -1323,80 +1469,76 @@ class MainActivity : Activity() {
         return pending
     }
 
-    private fun restoreHistoryState(state: String) {
+    private fun restoreHistoryState(file: File) {
+        val (snapshot, extracted) = extractArchive(file)
         restoringHistory = true
         try {
-            val snapshot = JSONObject(state)
             val preservedColor = drawing.currentColor()
-            val preservedSize = drawing.activeBrushSize()
             val preservedPencilSize = drawing.pencilToolSize()
             val preservedEraserSize = drawing.eraserToolSize()
             val preservedEraser = drawing.isEraser()
             val preservedOpacity = drawing.brushOpacity()
             val preservedPressure = drawing.pressureEnabled()
-            val preservedFrame = currentFrame.coerceIn(0, maxOf(0, frameDurations.lastIndex))
-            frameDurations.clear()
             val durations = snapshot.optJSONArray("durations")
+            frameDurations.clear()
             if (durations != null && durations.length() > 0) {
-                for (i in 0 until durations.length()) {
-                    frameDurations.add(durations.optInt(i, 3000).coerceAtLeast(100))
-                }
+                for (i in 0 until durations.length()) frameDurations.add(durations.optInt(i, 3000).coerceAtLeast(100))
             } else frameDurations.add(3000)
-            drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject())
-            drawing.setEraser(false)
-            drawing.setActiveBrushSize(preservedPencilSize)
-            drawing.setEraser(true)
-            drawing.setActiveBrushSize(preservedEraserSize)
-            drawing.setEraser(preservedEraser)
-            drawing.setColor(preservedColor)
-            drawing.setEraser(preservedEraser)
+            currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
+            drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject(), File(extracted, "frames"), currentFrame)
+            adoptSessionAssets(File(extracted, "frames"))
+            drawing.setEraser(false); drawing.setActiveBrushSize(preservedPencilSize)
+            drawing.setEraser(true); drawing.setActiveBrushSize(preservedEraserSize)
+            drawing.setEraser(preservedEraser); drawing.setColor(preservedColor); drawing.setEraser(preservedEraser)
             updateActiveToolButton(preservedEraser)
-            drawing.configureBrush(preservedSize, preservedOpacity * 255 / 100, preservedPressure)
-            currentFrame = preservedFrame.coerceIn(0, frameDurations.lastIndex)
+            drawing.configureBrush(if (preservedEraser) preservedEraserSize else preservedPencilSize,
+                preservedOpacity * 255 / 100, preservedPressure)
+            currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
             inlineColorPicker?.setColor(preservedColor)
-            updateSelectedColorIndicator()
-            updateFrameStatus()
-            updateTimeline()
+            updateSelectedColorIndicator(); updateFrameStatus(); updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
             scheduleAutosave()
         } finally {
             restoringHistory = false
+            if (activeSessionAssetDirectory != extracted) extracted.deleteRecursively()
         }
     }
 
     private fun undoGlobal() {
         flushPendingHistory()
         if (undoHistory.isEmpty()) return
-        val currentFile = storeHistoryState(historySnapshot())
-        redoHistory.addLast(currentFile)
-        trimHistory(redoHistory)
+        val currentFile = try { storeHistoryState() } catch (e: Exception) {
+            setStatus("No se pudo crear el estado de rehacer: ${e.message}"); return
+        }
+        redoHistory.addLast(currentFile); trimHistory(redoHistory)
         val previousFile = undoHistory.removeLast()
-        val state = try { readHistoryState(previousFile) } catch (e: Exception) {
+        try {
+            restoreHistoryState(previousFile)
+            lastHistoryStateFile?.delete()
+            lastHistoryStateFile = previousFile
+        } catch (e: Exception) {
             previousFile.delete()
             setStatus("No se pudo recuperar el historial: ${e.message}")
-            return
         }
-        lastHistoryStateFile?.delete()
-        lastHistoryStateFile = previousFile
-        restoreHistoryState(state)
     }
 
     private fun redoGlobal() {
         flushPendingHistory()
         if (redoHistory.isEmpty()) return
-        val currentFile = storeHistoryState(historySnapshot())
-        undoHistory.addLast(currentFile)
-        trimHistory(undoHistory)
+        val currentFile = try { storeHistoryState() } catch (e: Exception) {
+            setStatus("No se pudo crear el estado de deshacer: ${e.message}"); return
+        }
+        undoHistory.addLast(currentFile); trimHistory(undoHistory)
         val nextFile = redoHistory.removeLast()
-        val state = try { readHistoryState(nextFile) } catch (e: Exception) {
+        try {
+            restoreHistoryState(nextFile)
+            lastHistoryStateFile?.delete()
+            lastHistoryStateFile = nextFile
+        } catch (e: Exception) {
             nextFile.delete()
             setStatus("No se pudo recuperar el historial: ${e.message}")
-            return
         }
-        lastHistoryStateFile?.delete()
-        lastHistoryStateFile = nextFile
-        restoreHistoryState(state)
     }
 
     private fun updateTimeline() {
@@ -1657,6 +1799,8 @@ class MainActivity : Activity() {
         frameDurations.addAll(blocks.map { (it.endMs - it.startMs).coerceAtLeast(100) })
         currentFrame = 0
         drawing.clearProject()
+        activeSessionAssetDirectory?.deleteRecursively()
+        activeSessionAssetDirectory = null
         blocks.forEachIndexed { index, block ->
             drawing.setFrame(index)
             drawing.setFrameText(block.text, drawing.currentColor())
@@ -1720,31 +1864,23 @@ class MainActivity : Activity() {
         val uri = data.data!!
         when (requestCode) {
             REQUEST_SESSION -> {
+                val staged = File(cacheDir, "selected_session_${SystemClock.uptimeMillis()}.sbd")
                 try {
                     val grantFlags = data.flags and
                         (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                     if (grantFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-                        try {
-                            contentResolver.takePersistableUriPermission(uri, grantFlags)
-                        } catch (_: Exception) {
-                            // Some providers grant temporary access but do not support persistable grants.
-                        }
+                        try { contentResolver.takePersistableUriPermission(uri, grantFlags) } catch (_: Exception) { }
                     }
-                    val jsonText = contentResolver.openInputStream(uri)
-                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    contentResolver.openInputStream(uri)?.use { input -> FileOutputStream(staged).use { input.copyTo(it, 64 * 1024) } }
                         ?: throw IllegalStateException("No se pudo leer el archivo seleccionado")
-                    val sessionJson = JSONObject(jsonText)
-                    if (!sessionJson.has("drawing") || !sessionJson.has("durations")) {
-                        throw IllegalArgumentException("El archivo no parece ser una sesión válida de BV'Storyboarder")
-                    }
                     saveSession(showMessage = false)
-                    applySessionJson(sessionJson)
-                    resetHistory()
+                    readSessionFile(staged)
+                    resetHistory(reuseAutosave = false)
                     Toast.makeText(this, "Sesión abierta correctamente", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo abrir la sesión: ${e.message}")
                     Toast.makeText(this, "Error al abrir la sesión: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                } finally { staged.delete() }
             }
             REQUEST_SRT -> {
                 val loading = showImportLoading()
@@ -1832,9 +1968,11 @@ class MainActivity : Activity() {
             }
             102 -> {
                 try {
-                    contentResolver.openOutputStream(uri)?.use { output ->
-                        output.write(buildSessionJson().toString(2).toByteArray(Charsets.UTF_8))
-                    } ?: throw IllegalStateException("No se pudo crear el archivo")
+                    val staged = File(cacheDir, "session_export_${SystemClock.uptimeMillis()}.sbd")
+                    writeProjectArchive(staged)
+                    contentResolver.openOutputStream(uri)?.use { output -> staged.inputStream().use { it.copyTo(output, 64 * 1024) } }
+                        ?: throw IllegalStateException("No se pudo crear el archivo")
+                    staged.delete()
                     Toast.makeText(this, "Archivo de sesión guardado", Toast.LENGTH_LONG).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo exportar la sesión: ${e.message}")
@@ -1843,14 +1981,16 @@ class MainActivity : Activity() {
             103 -> {
                 try {
                     if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
                     }
-                    val json = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    val staged = File(cacheDir, "session_import_${SystemClock.uptimeMillis()}.sbd")
+                    contentResolver.openInputStream(uri)?.use { input -> FileOutputStream(staged).use { input.copyTo(it, 64 * 1024) } }
                         ?: throw IllegalStateException("No se pudo leer el archivo")
                     saveSession(showMessage = false)
                     saveLocalSnapshot()
-                    applySessionJson(JSONObject(json))
-                    resetHistory()
+                    readSessionFile(staged)
+                    staged.delete()
+                    resetHistory(reuseAutosave = false)
                     Toast.makeText(this, "Sesión cargada", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo abrir la sesión: ${e.message}")
@@ -2025,7 +2165,7 @@ class MainActivity : Activity() {
     private fun scheduleAutosave() {
         if (restoringSession) return
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 5_000)
+        handler.postDelayed(autosaveRunnable, 8_000)
     }
 
     private val autosaveRunnable = object : Runnable {
@@ -2051,7 +2191,6 @@ class MainActivity : Activity() {
                 val nextName = input.text.toString().trim()
                 if (nextName.isNotBlank()) {
                     projectName = nextName
-                    recordHistory()
                     updateFrameStatus()
                     updateTimeline()
                     scheduleAutosave()
@@ -2072,62 +2211,24 @@ class MainActivity : Activity() {
         updateTimeline()
     }
 
-    private fun buildSessionJson(): JSONObject {
+    private fun buildSessionJson(includeBitmapData: Boolean = true): JSONObject {
         val root = JSONObject()
-        root.put("version", 4)
+        root.put("version", 5)
         root.put("projectName", projectName)
         root.put("currentFrame", currentFrame)
         val durations = JSONArray()
         frameDurations.forEach { durations.put(it) }
         root.put("durations", durations)
-        root.put("drawing", drawing.toJson())
+        root.put("drawing", drawing.toJson(includeBitmapData))
         root.put("audioUri", audioUri?.toString() ?: JSONObject.NULL)
         root.put("audioDurationMs", audioDurationMs)
         return root
     }
 
     private fun saveSession(showMessage: Boolean) {
-        if (!::drawing.isInitialized) return
+        if (!::drawing.isInitialized || restoringSession) return
         try {
-            val parent = sessionFile.parentFile
-                ?: throw IllegalStateException("No se pudo determinar la carpeta de guardado")
-            if (!parent.exists() && !parent.mkdirs()) {
-                throw IllegalStateException("No se pudo crear la carpeta de guardado")
-            }
-
-            // Serialize once, then write to a sibling temporary file. Replacing the
-            // live session only after a complete flush prevents truncated autosaves.
-            val serialized = buildSessionJson().toString()
-            val tempFile = File(parent, "${sessionFile.name}.tmp")
-            val backupFile = File(parent, "${sessionFile.name}.bak")
-            java.io.FileOutputStream(tempFile).use { stream ->
-                val writer = java.io.OutputStreamWriter(stream, Charsets.UTF_8)
-                writer.write(serialized)
-                writer.flush()
-                stream.fd.sync()
-            }
-
-            if (sessionFile.exists()) {
-                val backupTemp = File(parent, "${backupFile.name}.tmp")
-                sessionFile.copyTo(backupTemp, overwrite = true)
-                if (backupFile.exists() && !backupFile.delete()) {
-                    backupTemp.delete()
-                    throw java.io.IOException("No se pudo reemplazar la copia de seguridad")
-                }
-                if (!backupTemp.renameTo(backupFile)) {
-                    backupTemp.delete()
-                    throw java.io.IOException("No se pudo preparar la copia de seguridad")
-                }
-            }
-
-            if (sessionFile.exists() && !sessionFile.delete()) {
-                throw java.io.IOException("No se pudo reemplazar el archivo de sesión")
-            }
-            if (!tempFile.renameTo(sessionFile)) {
-                // If replacement fails, restore the last known-good copy.
-                if (!sessionFile.exists() && backupFile.exists()) backupFile.copyTo(sessionFile, overwrite = true)
-                throw java.io.IOException("No se pudo finalizar el guardado de la sesión")
-            }
+            writeProjectArchive(sessionFile)
             if (showMessage) Toast.makeText(this, "Sesión guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             setStatus("Error al guardar sesión: ${e.message}")
@@ -2135,7 +2236,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applySessionJson(root: JSONObject) {
+    private fun applySessionJson(root: JSONObject, assetDirectory: File? = null) {
         restoringSession = true
         try {
             stopPlayback()
@@ -2163,9 +2264,10 @@ class MainActivity : Activity() {
                 frameDurations.add(3000)
             }
 
-            drawing.loadJson(root.optJSONObject("drawing") ?: JSONObject())
-            drawing.resetViewport()
             currentFrame = root.optInt("currentFrame", 0).coerceIn(0, frameDurations.lastIndex)
+            drawing.loadJson(root.optJSONObject("drawing") ?: JSONObject(), assetDirectory, currentFrame)
+            adoptSessionAssets(assetDirectory)
+            drawing.resetViewport()
             drawing.setFrame(currentFrame)
 
             if (!sameAudioSource && savedAudio.isNotBlank() && savedAudio != "null") {
@@ -2222,7 +2324,7 @@ class MainActivity : Activity() {
                 .replace(Regex("[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]"), "_")
             val stamp = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.US).format(java.util.Date())
             val file = File(sessionsDirectory, "${base}_$stamp.sbd")
-            file.writeText(buildSessionJson().toString(2))
+            writeProjectArchive(file)
             setStatus("Sesión guardada: ${sessionsDirectory.absolutePath}")
             Toast.makeText(this, "Sesión guardada en Documentos/BVstoryboarder/Sessions/${file.name}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
@@ -2252,8 +2354,8 @@ class MainActivity : Activity() {
                 try {
                     saveSession(showMessage = false)
                     saveLocalSnapshot()
-                    applySessionJson(JSONObject(files[which].readText()))
-                    resetHistory()
+                    readSessionFile(files[which])
+                    resetHistory(reuseAutosave = false)
                     Toast.makeText(this, "Sesión abierta", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     setStatus("No se pudo abrir la sesión: ${e.message}")
@@ -2323,6 +2425,8 @@ class MainActivity : Activity() {
                 projectName = "Mi storyboard"
                 if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
                 drawing.clearProject()
+                activeSessionAssetDirectory?.deleteRecursively()
+                activeSessionAssetDirectory = null
                 drawing.resetViewport()
                 drawing.setFrame(0)
                 updateFrameStatus()
@@ -2369,32 +2473,48 @@ class MainActivity : Activity() {
     }
 
     private fun loadSession() {
-        val backupFile = File(sessionFile.parentFile ?: filesDir, "${sessionFile.name}.bak")
-        val candidates = listOf(sessionFile, backupFile).filter { it.isFile && it.length() > 0L }
-        if (candidates.isEmpty()) return
-
-        var lastError: Exception? = null
-        for ((index, candidate) in candidates.withIndex()) {
-            try {
-                val root = JSONObject(candidate.readText(Charsets.UTF_8))
-                if (!root.has("drawing") || !root.has("durations")) {
-                    throw IllegalStateException("El archivo no contiene una sesión válida")
+        val backup = File(sessionFile.parentFile ?: filesDir, sessionFile.name + ".bak")
+        val candidates = listOf(sessionFile, backup).filter { it.isFile && it.length() > 0L }
+        if (candidates.isEmpty()) { resetHistory(); return }
+        val loading = showImportLoading()
+        Thread {
+            var loaded: Pair<JSONObject, File>? = null
+            var loadedFrom: File? = null
+            var failure: Exception? = null
+            for (candidate in candidates) {
+                try {
+                    loaded = readSessionPackage(candidate)
+                    loadedFrom = candidate
+                    break
+                } catch (e: Exception) {
+                    failure = e
+                    android.util.Log.e("StoryboardStudio", "Session load failed: ${candidate.name}", e)
                 }
-                applySessionJson(root)
-                if (candidate != sessionFile) {
-                    // Restore the last valid backup as the active autosave.
-                    candidate.copyTo(sessionFile, overwrite = true)
-                    setStatus("Sesión recuperada desde la copia de seguridad · ${frameDurations.size} planos")
-                } else {
-                    setStatus("Sesión recuperada · ${frameDurations.size} planos")
-                }
-                return
-            } catch (e: Exception) {
-                lastError = e
-                android.util.Log.e("StoryboardStudio", "Could not load session file: ${candidate.name}", e)
             }
-        }
-        setStatus("No se pudo recuperar la sesión: ${lastError?.message ?: "archivo inválido"}")
+            runOnUiThread {
+                if (isFinishing || isDestroyed) {
+                    loaded?.second?.deleteRecursively()
+                    loading.dismiss()
+                    return@runOnUiThread
+                }
+                try {
+                    val packageData = loaded
+                    if (packageData != null) {
+                        applySessionJson(packageData.first, File(packageData.second, "frames"))
+                        if (loadedFrom != sessionFile) loadedFrom?.copyTo(sessionFile, overwrite = true)
+                        setStatus("Sesión recuperada · ${frameDurations.size} planos")
+                    } else if (failure != null) {
+                        setStatus("No se pudo recuperar la sesión: ${failure?.message}")
+                    }
+                    resetHistory()
+                } catch (e: Exception) {
+                    loaded?.second?.deleteRecursively()
+                    setStatus("No se pudo abrir la sesión: ${e.message}")
+                    android.util.Log.e("StoryboardStudio", "Session apply failed", e)
+                    resetHistory()
+                } finally { loading.dismiss() }
+            }
+        }.start()
     }
     private fun writeToDocuments(
         displayName: String,
@@ -2503,19 +2623,20 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
-        // Finish a pending undo checkpoint before the final session snapshot.
-        flushPendingHistory()
         saveSession(showMessage = false)
         super.onPause()
     }
 
     override fun onDestroy() {
-        saveSession(showMessage = false)
+        handler.removeCallbacks(autosaveRunnable)
+        handler.removeCallbacks(pendingHistoryRunnable)
         if (::drawing.isInitialized) drawing.releaseCachedBitmaps(clearUndoHistory = true)
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
         lastHistoryStateFile?.delete()
         lastHistoryStateFile = null
+        activeSessionAssetDirectory?.deleteRecursively()
+        activeSessionAssetDirectory = null
         stopPlayback()
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
@@ -4416,7 +4537,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         return true
     }
 
-    fun toJson(): JSONObject {
+    fun toJson(includeBitmapData: Boolean = true): JSONObject {
         val root = JSONObject()
         root.put("brushSize", brush.toDouble())
         root.put("eraserSize", eraserBrush.toDouble())
@@ -4431,42 +4552,63 @@ class DrawingView(context: android.content.Context) : View(context) {
             frameObject.put("index", index)
             bakeLegacyFrame(index)
 
-            // Reuse the already-rasterized PNG for inactive frames. Do not decode it
-            // back into a 1920x1080 Bitmap just to immediately compress it again.
-            val resident = frameBitmaps[index]
-            val storedFile = frameBitmapFiles[index]
-            val pngBytes = when {
-                resident != null && !resident.isRecycled -> java.io.ByteArrayOutputStream().use { out ->
-                    if (!resident.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                        throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
-                    }
-                    out.toByteArray()
-                }
-                storedFile != null && storedFile.isFile && storedFile.length() > 0L -> storedFile.readBytes()
-                else -> {
-                    val bitmap = bitmapFor(index)
-                    java.io.ByteArrayOutputStream().use { out ->
-                        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                            throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
-                        }
+            if (includeBitmapData) {
+                val resident = frameBitmaps[index]
+                val storedFile = frameBitmapFiles[index]
+                val pngBytes = when {
+                    resident != null && !resident.isRecycled -> java.io.ByteArrayOutputStream().use { out ->
+                        if (!resident.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
                         out.toByteArray()
-                    }.also { if (index != frame) spillFrameBitmap(index) }
+                    }
+                    storedFile != null && storedFile.isFile && storedFile.length() > 0L -> storedFile.readBytes()
+                    else -> {
+                        val bitmap = bitmapFor(index)
+                        java.io.ByteArrayOutputStream().use { out ->
+                            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                            out.toByteArray()
+                        }.also { if (index != frame) spillFrameBitmap(index) }
+                    }
                 }
+                frameObject.put("bitmap", Base64.encodeToString(pngBytes, Base64.NO_WRAP))
+            } else {
+                frameObject.put("bitmapEntry", "frames/frame_${index}.png")
             }
-            frameObject.put("bitmap", Base64.encodeToString(pngBytes, Base64.NO_WRAP))
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
             frameObject.put("notes", noteArray)
             noteColors[index]?.let { frameObject.put("noteColor", it) }
             frameArray.put(frameObject)
+            if (!includeBitmapData && index != frame) spillFrameBitmap(index)
         }
         root.put("frames", frameArray)
         bitmapFor(frame)
         return root
     }
 
-    fun loadJson(root: JSONObject) {
-                frame = 0
+    fun writeFramePngEntries(zip: ZipOutputStream) {
+        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
+        indices.forEach { index ->
+            bakeLegacyFrame(index)
+            zip.putNextEntry(ZipEntry("frames/frame_${index}.png"))
+            val resident = frameBitmaps[index]
+            val stored = frameBitmapFiles[index]
+            when {
+                resident != null && !resident.isRecycled -> {
+                    if (!resident.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                }
+                stored != null && stored.isFile && stored.length() > 0L -> stored.inputStream().buffered().use { it.copyTo(zip, 64 * 1024) }
+                else -> {
+                    val bitmap = bitmapFor(index)
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                    if (index != frame) spillFrameBitmap(index)
+                }
+            }
+            zip.closeEntry()
+        }
+    }
+
+    fun loadJson(root: JSONObject, assetDirectory: File? = null, activeFrame: Int = 0) {
+        frame = activeFrame.coerceAtLeast(0)
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
@@ -4508,6 +4650,13 @@ class DrawingView(context: android.content.Context) : View(context) {
                 )
             }
             if (loadedStrokes.isNotEmpty()) frames[index] = loadedStrokes
+            val bitmapEntry = frameObject.optString("bitmapEntry", "")
+            if (bitmapEntry.isNotBlank() && assetDirectory != null) {
+                val source = File(assetDirectory, bitmapEntry.substringAfterLast('/'))
+                if (!source.isFile || source.length() <= 0L) throw IllegalStateException("Falta la imagen del plano ${index + 1}")
+                frameBitmapFiles[index] = source
+                frames.remove(index)
+            }
             val bitmapData = frameObject.optString("bitmap", "")
             if (bitmapData.isNotBlank()) {
                 // Session bitmaps are already PNG files encoded as Base64. Store their
@@ -4545,7 +4694,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                 } catch (e: Exception) {
                     throw IllegalStateException("No se pudo recuperar el plano ${index + 1}: ${e.message}", e)
                 }
-            } else {
+            } else if (bitmapEntry.isBlank() || assetDirectory == null) {
                 // Legacy sessions may still contain separate imported-image payloads
                 // and vector strokes. Decode these only when no flattened bitmap exists.
                 val imageData = frameObject.optString("importedImage", "")
@@ -4556,11 +4705,6 @@ class DrawingView(context: android.content.Context) : View(context) {
                 } catch (_: Exception) { }
                 bakeLegacyFrame(index)
             }
-            // Drop large Base64 payloads from the parsed session tree as soon as
-            // each frame has been transferred to its bitmap/cache file. This lowers
-            // peak retained memory while opening projects with many frames.
-            frameObject.remove("bitmap")
-            frameObject.remove("importedImage")
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
