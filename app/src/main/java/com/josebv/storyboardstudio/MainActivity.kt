@@ -4589,7 +4589,11 @@ class DrawingView(context: android.content.Context) : View(context) {
                     layerFrameFiles.getOrPut(id) { mutableMapOf() }[frameIndex] = file
                 }
             }
-            frameLayerStacks.forEach { (idx, stack) -> if (frameActiveLayerIds[idx] == null) frameActiveLayerIds[idx] = stack.firstOrNull()?.id }
+            frameLayerStacks.forEach { (idx, stack) ->
+                if (frameActiveLayerIds[idx] == null) {
+                    stack.firstOrNull()?.id?.let { layerId -> frameActiveLayerIds[idx] = layerId }
+                }
+            }
             drawingLayers.clear(); drawingLayers.addAll((frameLayerStacks[frame] ?: mutableListOf(DrawingLayer("layer_${frame}_base", "Capa 1"))).map { it.copy() })
             activeLayerId = frameActiveLayerIds[frame]?.takeIf { id -> drawingLayers.any { it.id == id } } ?: drawingLayers.first().id
             frameLayerStacks[frame] = drawingLayers.map { it.copy() }.toMutableList()
