@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.72 - clean session archive and temporary undo history.
+// BV'Storyboarder 0.9.73 - clean session archive and temporary undo history.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -35,6 +35,7 @@ import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.io.FilterOutputStream
 import java.io.InputStreamReader
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipEntry
@@ -475,7 +476,7 @@ class MainActivity : Activity() {
         headerAction("Guardar copia", 80, ::saveLocalSnapshot)
         headerDivider()
         val saveHeaderButton = addHeaderButton(top, "Guardar", dp(60)) { saveProject() }
-        saveHeaderButton.textSize = 14f
+        saveHeaderButton.textSize = 12f
         headerDivider()
         projectTitleLabel = TextView(this).apply {
             text = projectName
@@ -683,7 +684,7 @@ class MainActivity : Activity() {
         }
         addToolCell(toolRow2, pressureToolButton!!)
         addToolCell(toolRow2, tool("ic_clear", "Limpiar lienzo") { drawing.clear(); scheduleAutosave() })
-        lassoToolButton = tool("ic_pressure", "Selección tipo lazo") {
+        lassoToolButton = tool("ic_lasso", "Selección tipo lazo") {
             drawing.startLassoSelection()
             selectionActionsView?.visibility = View.VISIBLE
             updateModeToolAlpha(lassoActive = true)
@@ -1456,7 +1457,7 @@ class MainActivity : Activity() {
     private fun scheduleHistoryRecord() {
         handler.removeCallbacks(pendingHistoryRunnable)
         historyRecordPending = true
-        handler.postDelayed(pendingHistoryRunnable, 500L)
+        handler.post(pendingHistoryRunnable)
     }
 
     private fun flushPendingHistory(): Boolean {
@@ -1824,6 +1825,73 @@ class MainActivity : Activity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         }
 
+
+    private data class TaskProgressUi(
+        val dialog: Dialog,
+        val update: (Int, String) -> Unit
+    )
+
+    /** Modal 50%-black loading layer with a thick, determinate white progress bar. */
+    private fun showTaskProgress(title: String): TaskProgressUi {
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(128, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(32), dp(20), dp(32), dp(20))
+        }
+        val label = TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(14))
+        }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = false
+            max = 100
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
+            minimumHeight = dp(12)
+        }
+        content.addView(label, LinearLayout.LayoutParams(dp(300), -2))
+        content.addView(progress, LinearLayout.LayoutParams(dp(300), dp(12)))
+        overlay.addView(content, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        val dialog = Dialog(this).apply {
+            setContentView(overlay)
+            setCancelable(false)
+            window?.setBackgroundDrawableResource(android.R.color.transparent)
+            show()
+            window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val update: (Int, String) -> Unit = { value, message ->
+            runOnUiThread {
+                if (dialog.isShowing) {
+                    progress.progress = value.coerceIn(0, 100)
+                    if (message.isNotBlank()) label.text = message
+                }
+            }
+        }
+        return TaskProgressUi(dialog, update)
+    }
+
+    private class CountingOutputStream(
+        output: OutputStream,
+        private val onBytes: (Long) -> Unit
+    ) : FilterOutputStream(output) {
+        private var count = 0L
+        override fun write(b: Int) {
+            out.write(b); count++; onBytes(count)
+        }
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            out.write(b, off, len); count += len; onBytes(count)
+        }
+    }
+
     private fun showImportLoading(): Dialog {
         val overlay = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(128, 0, 0, 0))
@@ -1998,7 +2066,7 @@ class MainActivity : Activity() {
             }
         }
     }
-    private fun extractWaveform(uri: Uri): FloatArray {
+    private fun extractWaveform(uri: Uri, onProgress: ((Int) -> Unit)? = null): FloatArray {
         val bucketCount = 3200
         val peaks = FloatArray(bucketCount)
         var extractor: MediaExtractor? = null
@@ -2061,6 +2129,10 @@ class MainActivity : Activity() {
                                 if (value > peaks[bucket]) peaks[bucket] = value
                                 sampleCounter++
                             }
+                            if (durationUs > 0L) {
+                                val decodedUs = info.presentationTimeUs.coerceAtLeast(0L)
+                                onProgress?.invoke((decodedUs * 100L / durationUs).toInt().coerceIn(0, 100))
+                            }
                         }
                         codec.releaseOutputBuffer(outputIndex, false)
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
@@ -2078,8 +2150,18 @@ class MainActivity : Activity() {
         return peaks
     }
 
-    private fun attachAudio(uri: Uri, persistPermission: Boolean) {
+    private fun attachAudio(uri: Uri, persistPermission: Boolean, showProgress: Boolean = false) {
+        var taskProgress: TaskProgressUi? = null
+        var playerPrepared = false
+        var waveformFinished = false
+        fun finishAudioLoadingIfReady() {
+            if (playerPrepared && waveformFinished) {
+                taskProgress?.update?.invoke(100, "Audio cargado")
+                taskProgress?.dialog?.dismiss()
+            }
+        }
         try {
+            if (showProgress) taskProgress = showTaskProgress("Cargando audio…")
             if (persistPermission) {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -2090,9 +2172,12 @@ class MainActivity : Activity() {
                 setDataSource(this@MainActivity, uri)
                 setOnPreparedListener { player ->
                     audioDurationMs = player.duration
+                    playerPrepared = true
+                    taskProgress?.update?.invoke(10, "Preparando reproducción…")
                     updateTimeline()
                     setStatus("Audio cargado · ${formatTime(audioDurationMs)}")
                     scheduleAutosave()
+                    finishAudioLoadingIfReady()
                 }
                 setOnCompletionListener {
                     stopPlayback()
@@ -2100,6 +2185,8 @@ class MainActivity : Activity() {
                 }
                 setOnErrorListener { _, _, _ ->
                     setStatus("No se pudo reproducir el audio")
+                    playerPrepared = true
+                    finishAudioLoadingIfReady()
                     true
                 }
                 prepareAsync()
@@ -2108,14 +2195,19 @@ class MainActivity : Activity() {
             timelineView.setAudioLoading(true)
             updateTimeline()
             Thread {
-                val extracted = extractWaveform(uri)
+                val extracted = extractWaveform(uri) { percent ->
+                    taskProgress?.update?.invoke(10 + percent * 89 / 100, "Analizando audio… $percent%")
+                }
                 runOnUiThread {
                     waveform = extracted
+                    waveformFinished = true
                     timelineView.setAudioLoading(false)
                     updateTimeline()
+                    finishAudioLoadingIfReady()
                 }
             }.start()
         } catch (e: Exception) {
+            taskProgress?.dialog?.dismiss()
             setStatus("No se pudo recuperar el audio: ${e.message}")
         }
     }
@@ -2522,92 +2614,163 @@ class MainActivity : Activity() {
         subfolder: String,
         writer: (OutputStream) -> Unit
     ) {
+        val sessionFolder = safeProjectFileName()
+        val relativePath = Environment.DIRECTORY_DOCUMENTS +
+            "/Storyboarder/Exports/$sessionFolder/$subfolder/"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            // Re-exporting the same session/file replaces the previous result.
+            val selection = "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=?"
+            contentResolver.query(
+                collection,
+                arrayOf(MediaStore.MediaColumns._ID),
+                selection,
+                arrayOf(displayName, relativePath),
+                null
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                while (cursor.moveToNext()) {
+                    val existing = android.content.ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
+                    contentResolver.delete(existing, null, null)
+                }
+            }
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                put(
-                    MediaStore.MediaColumns.RELATIVE_PATH,
-                    Environment.DIRECTORY_DOCUMENTS + "/Storyboarder/Exports/" + subfolder
-                )
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             val uri = contentResolver.insert(collection, values)
                 ?: throw IllegalStateException("Android no permitió crear el archivo en Documentos")
             try {
                 contentResolver.openOutputStream(uri, "w")?.use(writer)
                     ?: throw IllegalStateException("No se pudo abrir el archivo para escritura")
-                val ready = ContentValues().apply {
-                    put(MediaStore.MediaColumns.IS_PENDING, 0)
-                }
+                val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
                 contentResolver.update(uri, ready, null, null)
             } catch (e: Exception) {
                 contentResolver.delete(uri, null, null)
                 throw e
             }
         } else {
-            // Android 6–9 fallback: app's Documents export folder (legacy shared-storage access is restricted).
-            val base = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
-                "Storyboarder/Exports/$subfolder")
-            if (!base.exists() && !base.mkdirs()) {
-                throw IllegalStateException("No se pudo crear ${base.absolutePath}")
-            }
-            FileOutputStream(File(base, displayName)).use(writer)
+            val base = File(
+                getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir,
+                "Storyboarder/Exports/$sessionFolder/$subfolder"
+            )
+            if (!base.exists() && !base.mkdirs()) throw IllegalStateException("No se pudo crear ${base.absolutePath}")
+            FileOutputStream(File(base, displayName), false).use(writer)
         }
     }
 
     private fun exportPdf() {
-        var document: PdfDocument? = null
-        try {
-            val pdf = PdfDocument()
-            document = pdf
-            frameDurations.indices.forEach { index ->
-                val page = pdf.startPage(
-                    PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create()
-                )
-                drawing.drawFrameToCanvas(index, page.canvas)
-                pdf.finishPage(page)
+        val progress = showTaskProgress("Preparando PDF…")
+        Thread {
+            var document: PdfDocument? = null
+            try {
+                val pdf = PdfDocument()
+                document = pdf
+                val total = frameDurations.size.coerceAtLeast(1)
+                frameDurations.indices.forEach { index ->
+                    val page = pdf.startPage(PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create())
+                    drawing.drawFrameToCanvas(index, page.canvas)
+                    pdf.finishPage(page)
+                    progress.update(((index + 1) * 85 / total), "Preparando página ${index + 1} de $total")
+                }
+                progress.update(90, "Guardando PDF…")
+                writeToDocuments(
+                    "${safeProjectFileName()}.pdf",
+                    "application/pdf",
+                    "PDF"
+                ) { output ->
+                    val counted = CountingOutputStream(output) { bytes ->
+                        val estimate = (1920L * 1080L * 4L * total).coerceAtLeast(1L)
+                        progress.update((90 + (bytes * 9L / estimate).toInt()).coerceAtMost(99), "Escribiendo PDF…")
+                    }
+                    pdf.writeTo(counted)
+                    counted.flush()
+                }
+                progress.update(100, "Exportación completada")
+                runOnUiThread {
+                    setStatus("PDF guardado en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PDF")
+                    Toast.makeText(this, "PDF exportado correctamente", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    setStatus("Error al exportar PDF: ${e.message}")
+                    Toast.makeText(this, "Falló la exportación PDF: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                try { document?.close() } catch (_: Exception) {}
+                runOnUiThread { progress.dialog.dismiss() }
             }
-            writeToDocuments(
-                "${safeProjectFileName()}.pdf",
-                "application/pdf",
-                "PDF"
-            ) { output -> pdf.writeTo(output) }
-            setStatus("PDF guardado en Documentos/BVstoryboarder/Exports/PDF")
-            Toast.makeText(this, "PDF exportado a Documentos", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            setStatus("Error al exportar PDF: ${e.message}")
-            Toast.makeText(this, "Falló la exportación PDF: ${e.message}", Toast.LENGTH_LONG).show()
-        } finally {
-            try { document?.close() } catch (_: Exception) {}
-        }
+        }.start()
     }
 
     private fun exportCurrentPng() {
-        try {
-            val name = "${safeProjectFileName()}_plano_${(currentFrame + 1).toString().padStart(3, '0')}.png"
-            writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportCurrent(output) }
-            setStatus("PNG guardado en Documentos/BVstoryboarder/Exports/PNG")
-            Toast.makeText(this, "Plano ${currentFrame + 1} exportado a Documentos", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            setStatus("Error al exportar PNG: ${e.message}")
-            Toast.makeText(this, "Falló la exportación PNG: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        val frameIndex = currentFrame
+        val progress = showTaskProgress("Exportando plano…")
+        Thread {
+            try {
+                val name = "${safeProjectFileName()}_plano_${(frameIndex + 1).toString().padStart(3, '0')}.png"
+                progress.update(5, "Renderizando plano ${frameIndex + 1}…")
+                writeToDocuments(name, "image/png", "PNG") { output ->
+                    val counted = CountingOutputStream(output) { bytes ->
+                        val estimate = 1920L * 1080L * 4L
+                        progress.update((5 + (bytes * 90L / estimate).toInt()).coerceAtMost(95), "Codificando PNG…")
+                    }
+                    drawing.exportFrame(frameIndex, counted)
+                    counted.flush()
+                }
+                progress.update(100, "Exportación completada")
+                runOnUiThread {
+                    setStatus("PNG guardado en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PNG")
+                    Toast.makeText(this, "Plano ${frameIndex + 1} exportado correctamente", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    setStatus("Error al exportar PNG: ${e.message}")
+                    Toast.makeText(this, "Falló la exportación PNG: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                runOnUiThread { progress.dialog.dismiss() }
+            }
+        }.start()
     }
 
     private fun exportAllPng() {
-        try {
-            for (i in frameDurations.indices) {
-                val name = "${safeProjectFileName()}_plano_${(i + 1).toString().padStart(3, '0')}.png"
-                writeToDocuments(name, "image/png", "PNG") { output -> drawing.exportFrame(i, output) }
+        val total = frameDurations.size.coerceAtLeast(1)
+        val progress = showTaskProgress("Exportando todos los planos…")
+        Thread {
+            try {
+                for (i in frameDurations.indices) {
+                    val name = "${safeProjectFileName()}_plano_${(i + 1).toString().padStart(3, '0')}.png"
+                    val base = i * 100 / total
+                    progress.update(base, "Exportando plano ${i + 1} de $total")
+                    writeToDocuments(name, "image/png", "PNG") { output ->
+                        val counted = CountingOutputStream(output) { bytes ->
+                            val estimate = 1920L * 1080L * 4L
+                            val withinFrame = (bytes * 100L / estimate).toInt().coerceIn(0, 95)
+                            progress.update((base + withinFrame * 100 / total).coerceAtMost(99),
+                                "Exportando plano ${i + 1} de $total")
+                        }
+                        drawing.exportFrame(i, counted)
+                        counted.flush()
+                    }
+                    progress.update((i + 1) * 100 / total, "Exportando plano ${i + 1} de $total")
+                }
+                progress.update(100, "Exportación completada")
+                runOnUiThread {
+                    setStatus("$total PNG guardados en Documentos/Storyboarder/Exports/${safeProjectFileName()}/PNG")
+                    Toast.makeText(this, "$total planos exportados correctamente", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    setStatus("Error al exportar PNG: ${e.message}")
+                    Toast.makeText(this, "Falló la exportación: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                runOnUiThread { progress.dialog.dismiss() }
             }
-            setStatus("${frameDurations.size} PNG guardados en Documentos/BVstoryboarder/Exports/PNG")
-            Toast.makeText(this, "${frameDurations.size} planos exportados a Documentos", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            setStatus("Error al exportar PNG: ${e.message}")
-            Toast.makeText(this, "Falló la exportación: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        }.start()
     }
 
     private fun formatTime(ms: Int): String {

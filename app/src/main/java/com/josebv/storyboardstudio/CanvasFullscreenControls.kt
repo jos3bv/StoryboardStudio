@@ -22,7 +22,7 @@ object CanvasFullscreenControls {
     }
 
     fun updateToggleIcon(context: Context, button: Button, fullscreen: Boolean) {
-        val resource = if (fullscreen) R.drawable.ic_clear else R.drawable.ic_export_png
+        val resource = if (fullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen_enter
         val bitmap = BitmapFactory.decodeResource(context.resources, resource) ?: return
         val drawable = android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
         val size = (30f * context.resources.displayMetrics.density + 0.5f).toInt()

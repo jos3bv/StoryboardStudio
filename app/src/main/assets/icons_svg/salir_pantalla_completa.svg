@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46.08 46.08">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #b4b4b4;
+      }
+
+      .cls-2 {
+        fill: #424242;
+      }
+
+      .cls-3 {
+        fill: #ff2424;
+      }
+    </style>
+  </defs>
+  <g id="BV_StoryboardStudio" data-name="BV&amp;apos;StoryboardStudio">
+    <g id="boton_encuadrar_lienzo" data-name="boton encuadrar lienzo">
+      <g>
+        <rect class="cls-2" x=".5" y=".5" width="45.08" height="45.08"/>
+        <path class="cls-1" d="M46.08,46.08H0V0h46.08v46.08ZM1,45.08h44.08V1H1v44.08Z"/>
+      </g>
+      <polygon class="cls-3" points="28.01 19.49 26.59 18.07 23.04 21.63 19.49 18.07 18.08 19.49 21.63 23.04 18.08 26.59 19.49 28.01 23.04 24.46 26.59 28.01 28.01 26.59 24.46 23.04 28.01 19.49"/>
+      <g>
+        <polygon class="cls-1" points="7.59 16.45 7.59 13.51 11.3 13.51 11.3 11.76 5.84 11.76 5.84 16.45 7.59 16.45"/>
+        <polygon class="cls-1" points="34.78 13.51 38.5 13.51 38.5 16.45 40.24 16.45 40.24 11.76 34.78 11.76 34.78 13.51"/>
+        <polygon class="cls-1" points="38.5 29.63 38.5 32.58 34.78 32.58 34.78 34.32 40.24 34.32 40.24 29.63 38.5 29.63"/>
+        <polygon class="cls-1" points="11.3 32.58 7.59 32.58 7.59 29.63 5.84 29.63 5.84 34.32 11.3 34.32 11.3 32.58"/>
+      </g>
+    </g>
+  </g>
+</svg>
