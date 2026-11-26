@@ -11,8 +11,8 @@ android {
         applicationId = "com.josebv.storyboardstudio"
         minSdk = 23
         targetSdk = 28
-        versionCode = 79
-        versionName = "0.9.69"
+        versionCode = 80
+        versionName = "0.9.70"
     }
 
     compileOptions {

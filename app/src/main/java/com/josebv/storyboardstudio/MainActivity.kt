@@ -164,32 +164,41 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    private fun handleStylusSideButton(event: MotionEvent) {
         val actionIndex = event.actionIndex.coerceIn(0, max(0, event.pointerCount - 1))
         val toolType = if (event.pointerCount > 0) event.getToolType(actionIndex) else MotionEvent.TOOL_TYPE_UNKNOWN
-        val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+        val stylusSource = event.isFromSource(android.view.InputDevice.SOURCE_STYLUS)
+        val isStylus = stylusSource || toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+        if (!isStylus) return
+
         val sideButtonMask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY
-        val sideButtonDown = isStylus && (event.buttonState and sideButtonMask) != 0
-        val buttonPressedNow = event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
-            isStylus && (sideButtonDown || event.buttonState != 0)
-        val fallbackPressEdge = sideButtonDown && !stylusSideButtonDown &&
-            (event.actionMasked == MotionEvent.ACTION_DOWN ||
-             event.actionMasked == MotionEvent.ACTION_MOVE ||
-             event.actionMasked == MotionEvent.ACTION_HOVER_MOVE)
-        if (buttonPressedNow || fallbackPressEdge) {
-            if (!stylusSideButtonDown && ::drawing.isInitialized) {
-                drawing.setEraser(!drawing.isEraser())
-                updateActiveToolButton()
-                brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
-                scheduleAutosave()
-            }
+        val sideButtonDown = (event.buttonState and sideButtonMask) != 0
+        val actionButtonPressed = event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
+            (event.actionButton and sideButtonMask) != 0
+        val pressEdge = actionButtonPressed || (sideButtonDown && !stylusSideButtonDown)
+
+        // Handle the press itself, including generic-motion delivery from Samsung S Pen.
+        if (pressEdge && !stylusSideButtonDown && ::drawing.isInitialized) {
+            drawing.setEraser(!drawing.isEraser())
+            updateActiveToolButton()
+            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            scheduleAutosave()
         }
-        if (event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
-            stylusSideButtonDown = false
-        } else {
-            stylusSideButtonDown = sideButtonDown || (buttonPressedNow && event.actionMasked != MotionEvent.ACTION_BUTTON_RELEASE)
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_BUTTON_RELEASE -> stylusSideButtonDown = false
+            else -> stylusSideButtonDown = sideButtonDown || actionButtonPressed
         }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        handleStylusSideButton(event)
         return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        handleStylusSideButton(event)
+        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -672,7 +681,9 @@ class MainActivity : Activity() {
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
-                leftMargin = 0
+                // The slider track is 6dp from its own left edge; offset it so
+                // the track's centerline sits exactly on the canvas boundary.
+                leftMargin = -dp(6)
                 topMargin = 0
                 rightMargin = 0
                 bottomMargin = 0
@@ -897,7 +908,7 @@ class MainActivity : Activity() {
         fullscreenTimeline?.visibility = if (enabled) View.GONE else View.VISIBLE
         fullscreenSliderRail?.visibility = View.VISIBLE
         (fullscreenSliderRail?.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
-            params.leftMargin = 0
+            params.leftMargin = -dp(6)
             fullscreenSliderRail?.layoutParams = params
         }
         showPanelsButton?.visibility = View.VISIBLE
