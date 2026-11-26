@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.53 - lazy PNG frame loading and direct disk-backed autosave serialization.
+// BV'Storyboarder 0.9.54 - bounded frame residency and region-based stroke history.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -89,7 +89,8 @@ class MainActivity : Activity() {
     private val undoHistory = ArrayDeque<File>()
     private val redoHistory = ArrayDeque<File>()
     private var restoringHistory = false
-    private var lastHistoryState: String? = null
+    private var lastHistoryStateFile: File? = null
+    private var historyRecordPending = false
     private var historyFileCounter = 0L
     private val maxHistorySteps = 10
 
@@ -101,6 +102,23 @@ class MainActivity : Activity() {
 
     private fun readHistoryState(file: File): String = file.readText(Charsets.UTF_8)
 
+    private fun historyMatchesFile(state: String, file: File): Boolean {
+        if (!file.isFile) return false
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count <= 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val previousHash = digest.digest()
+        val currentHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(state.toByteArray(Charsets.UTF_8))
+        return previousHash.contentEquals(currentHash)
+    }
+
     private fun trimHistory(queue: ArrayDeque<File>) {
         while (queue.size > maxHistorySteps) queue.removeFirst().delete()
     }
@@ -111,6 +129,7 @@ class MainActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val historyRecordRunnable = Runnable {
+        historyRecordPending = false
         if (!restoringHistory && !isFinishing && !isDestroyed && ::drawing.isInitialized) {
             recordHistory()
         }
@@ -163,7 +182,7 @@ class MainActivity : Activity() {
         loadSession()
         resetHistory()
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 15_000)
+        handler.postDelayed(autosaveRunnable, 60_000)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -185,6 +204,7 @@ class MainActivity : Activity() {
             }
             onHistoryAction = {
                 if (!restoringHistory) {
+                    historyRecordPending = true
                     handler.removeCallbacks(historyRecordRunnable)
                     handler.postDelayed(historyRecordRunnable, 650)
                 }
@@ -1133,23 +1153,35 @@ class MainActivity : Activity() {
     private fun resetHistory() {
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
+        lastHistoryStateFile?.delete()
         historyDirectory.listFiles()?.forEach { it.delete() }
-        lastHistoryState = historySnapshot()
+        lastHistoryStateFile = storeHistoryState(historySnapshot())
     }
 
     private fun recordHistory() {
         if (restoringHistory || !::drawing.isInitialized) return
-        val state = historySnapshot()
-        val previous = lastHistoryState
-        if (previous == null) {
-            lastHistoryState = state
-            return
+        if (historyRecordPending) {
+            handler.removeCallbacks(historyRecordRunnable)
+            historyRecordPending = false
         }
-        if (state == previous) return
-        undoHistory.addLast(storeHistoryState(previous))
-        trimHistory(undoHistory)
+        val previous = lastHistoryStateFile
+        val state = historySnapshot()
+        if (previous != null && historyMatchesFile(state, previous)) return
+        drawing.clearAllStrokeHistory()
+        if (previous != null) {
+            undoHistory.addLast(previous)
+            trimHistory(undoHistory)
+        }
         clearHistoryFiles(redoHistory)
-        lastHistoryState = state
+        lastHistoryStateFile = storeHistoryState(state)
+    }
+
+    private fun flushPendingHistory(): Boolean {
+        if (!historyRecordPending) return false
+        handler.removeCallbacks(historyRecordRunnable)
+        historyRecordPending = false
+        recordHistory()
+        return true
     }
 
     private fun restoreHistoryState(state: String) {
@@ -1187,7 +1219,6 @@ class MainActivity : Activity() {
             updateFrameStatus()
             updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
-            lastHistoryState = historySnapshot()
             scheduleAutosave()
         } finally {
             restoringHistory = false
@@ -1195,26 +1226,44 @@ class MainActivity : Activity() {
     }
 
     private fun undoGlobal() {
-        handler.removeCallbacks(historyRecordRunnable)
-        recordHistory()
+        flushPendingHistory()
+        if (drawing.undoStroke()) {
+            scheduleAutosave()
+            return
+        }
         if (undoHistory.isEmpty()) return
-        val current = historySnapshot()
-        redoHistory.addLast(storeHistoryState(current))
+        val currentFile = storeHistoryState(historySnapshot())
+        redoHistory.addLast(currentFile)
         trimHistory(redoHistory)
-        val file = undoHistory.removeLast()
-        val state = try { readHistoryState(file) } finally { file.delete() }
+        val previousFile = undoHistory.removeLast()
+        val state = try { readHistoryState(previousFile) } catch (e: Exception) {
+            previousFile.delete()
+            setStatus("No se pudo recuperar el historial: ${e.message}")
+            return
+        }
+        lastHistoryStateFile?.delete()
+        lastHistoryStateFile = previousFile
         restoreHistoryState(state)
     }
 
     private fun redoGlobal() {
-        handler.removeCallbacks(historyRecordRunnable)
-        recordHistory()
+        flushPendingHistory()
+        if (drawing.redoStroke()) {
+            scheduleAutosave()
+            return
+        }
         if (redoHistory.isEmpty()) return
-        val current = historySnapshot()
-        undoHistory.addLast(storeHistoryState(current))
+        val currentFile = storeHistoryState(historySnapshot())
+        undoHistory.addLast(currentFile)
         trimHistory(undoHistory)
-        val file = redoHistory.removeLast()
-        val state = try { readHistoryState(file) } finally { file.delete() }
+        val nextFile = redoHistory.removeLast()
+        val state = try { readHistoryState(nextFile) } catch (e: Exception) {
+            nextFile.delete()
+            setStatus("No se pudo recuperar el historial: ${e.message}")
+            return
+        }
+        lastHistoryStateFile?.delete()
+        lastHistoryStateFile = nextFile
         restoreHistoryState(state)
     }
 
@@ -1762,7 +1811,7 @@ class MainActivity : Activity() {
     private fun scheduleAutosave() {
         if (restoringSession) return
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 1800)
+        handler.postDelayed(autosaveRunnable, 5_000)
     }
 
     private val autosaveRunnable = object : Runnable {
@@ -2167,7 +2216,7 @@ class MainActivity : Activity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (::drawing.isInitialized && level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            drawing.releaseCachedBitmaps()
+            drawing.releaseCachedBitmaps(releaseActive = false)
         }
     }
 
@@ -2178,9 +2227,11 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         saveSession(showMessage = false)
-        if (::drawing.isInitialized) drawing.releaseCachedBitmaps()
+        if (::drawing.isInitialized) drawing.releaseCachedBitmaps(clearUndoHistory = true)
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
+        lastHistoryStateFile?.delete()
+        lastHistoryStateFile = null
         stopPlayback()
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
@@ -2825,13 +2876,79 @@ private data class Stroke(
 )
 
 class DrawingView(context: android.content.Context) : View(context) {
-    private data class ClearSnapshot(
-        val strokes: List<Stroke>,
-        val imagePng: ByteArray?
-    )
+    private data class StrokeRegionSnapshot(val bounds: Rect, val pixels: Bitmap)
+    private val strokeUndoSnapshots = mutableMapOf<Int, MutableList<StrokeRegionSnapshot>>()
+    private val strokeRedoSnapshots = mutableMapOf<Int, MutableList<StrokeRegionSnapshot>>()
 
-    private val clearUndoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
-    private val clearRedoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
+    private fun clearStrokeHistory(index: Int) {
+        strokeUndoSnapshots.remove(index)?.forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeRedoSnapshots.remove(index)?.forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+    }
+
+    fun clearAllStrokeHistory() {
+        strokeUndoSnapshots.keys.toList().forEach { clearStrokeHistory(it) }
+        strokeRedoSnapshots.keys.toList().forEach { clearStrokeHistory(it) }
+    }
+
+    private fun remapStrokeHistory(mapIndex: (Int) -> Int?) {
+        fun remap(source: MutableMap<Int, MutableList<StrokeRegionSnapshot>>): MutableMap<Int, MutableList<StrokeRegionSnapshot>> {
+            val result = mutableMapOf<Int, MutableList<StrokeRegionSnapshot>>()
+            source.forEach { (old, snapshots) ->
+                val next = mapIndex(old)
+                if (next == null) snapshots.forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+                else result[next] = snapshots
+            }
+            return result
+        }
+        val undo = remap(strokeUndoSnapshots)
+        val redo = remap(strokeRedoSnapshots)
+        strokeUndoSnapshots.clear(); strokeUndoSnapshots.putAll(undo)
+        strokeRedoSnapshots.clear(); strokeRedoSnapshots.putAll(redo)
+    }
+
+    private fun trimStrokeHistoryMemory(maxBytes: Long = 24L * 1024L * 1024L) {
+        fun retainedBytes(): Long = (strokeUndoSnapshots.values.asSequence().flatten() +
+            strokeRedoSnapshots.values.asSequence().flatten()).sumOf { it.pixels.allocationByteCount.toLong() }
+        while (retainedBytes() > maxBytes) {
+            val undoEntry = strokeUndoSnapshots.entries.firstOrNull { it.value.isNotEmpty() }
+            val redoEntry = strokeRedoSnapshots.entries.firstOrNull { it.value.isNotEmpty() }
+            val list = undoEntry?.value ?: redoEntry?.value ?: break
+            list.removeAt(0).pixels.recycle()
+        }
+    }
+
+    private fun captureStrokeBeforeImage(target: Bitmap): StrokeRegionSnapshot? {
+        val bounds = inProgressBounds ?: return null
+        val pad = 2
+        val left = (kotlin.math.floor(bounds.left).toInt() - pad).coerceIn(0, target.width)
+        val top = (kotlin.math.floor(bounds.top).toInt() - pad).coerceIn(0, target.height)
+        val right = (kotlin.math.ceil(bounds.right).toInt() + pad).coerceIn(0, target.width)
+        val bottom = (kotlin.math.ceil(bounds.bottom).toInt() + pad).coerceIn(0, target.height)
+        if (right <= left || bottom <= top) return null
+        val rect = Rect(left, top, right, bottom)
+        return StrokeRegionSnapshot(rect, Bitmap.createBitmap(target, left, top, rect.width(), rect.height()))
+    }
+
+    fun undoStroke(): Boolean = restoreStrokeRegion(strokeUndoSnapshots, strokeRedoSnapshots)
+    fun redoStroke(): Boolean = restoreStrokeRegion(strokeRedoSnapshots, strokeUndoSnapshots)
+
+    private fun restoreStrokeRegion(
+        source: MutableMap<Int, MutableList<StrokeRegionSnapshot>>,
+        destination: MutableMap<Int, MutableList<StrokeRegionSnapshot>>
+    ): Boolean {
+        val stack = source[frame] ?: return false
+        if (stack.isEmpty()) return false
+        val snapshot = stack.removeAt(stack.lastIndex)
+        val target = bitmapFor(frame)
+        val after = Bitmap.createBitmap(target, snapshot.bounds.left, snapshot.bounds.top,
+            snapshot.bounds.width(), snapshot.bounds.height())
+        Canvas(target).drawBitmap(snapshot.pixels, snapshot.bounds.left.toFloat(), snapshot.bounds.top.toFloat(), Paint(Paint.FILTER_BITMAP_FLAG))
+        if (!snapshot.pixels.isRecycled) snapshot.pixels.recycle()
+        destination.getOrPut(frame) { mutableListOf() }.add(StrokeRegionSnapshot(snapshot.bounds, after))
+        invalidate()
+        onChanged?.invoke()
+        return true
+    }
 
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
@@ -2849,8 +2966,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         setBackgroundColor(Color.TRANSPARENT)
     }
 
-    private fun frameFile(index: Int): File = frameBitmapFiles.getOrPut(index) {
-        File(frameBitmapDirectory, "frame_${java.util.UUID.randomUUID()}.png")
+    private fun frameFile(index: Int): File {
+        val existing = frameBitmapFiles[index]
+        if (existing != null) return existing
+        val created = File(frameBitmapDirectory, "frame_${java.util.UUID.randomUUID()}.png")
+        frameBitmapFiles[index] = created
+        return created
     }
 
     private fun spillFrameBitmap(index: Int) {
@@ -2891,6 +3012,9 @@ class DrawingView(context: android.content.Context) : View(context) {
         val loaded = if (file != null && file.isFile && file.length() > 0L) {
             try { BitmapFactory.decodeFile(file.absolutePath) } catch (_: Exception) { null }
         } else null
+        if (loaded != null) {
+            frameBitmapFiles.remove(index)?.let { if (it.exists()) it.delete() }
+        }
         val bitmap = if (loaded != null) {
             if (loaded.width == 1920 && loaded.height == 1080 && loaded.config == Bitmap.Config.ARGB_8888) {
                 loaded
@@ -2904,6 +3028,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                 normalized
             }
         } else {
+            if (file != null && file.exists() && file.length() > 0L) {
+                throw IllegalStateException("No se pudo recuperar el contenido del plano ${index + 1}")
+            }
             Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         }
         frameBitmaps[index] = bitmap
@@ -2957,7 +3084,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.remove(index)
         importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
     }
-    private val redoFrames = mutableMapOf<Int, MutableList<Stroke>>()
     private val notes = mutableMapOf<Int, MutableList<String>>()
     private val noteColors = mutableMapOf<Int, Int>()
     private var frame = 0
@@ -2966,17 +3092,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var brush = 4f
     private var eraserBrush = 20f
     private val importedImages = mutableMapOf<Int, Bitmap>()
-    // Imported bitmaps are immutable after fitting; reuse their PNG/Base64 payload across
-    // history snapshots instead of recompressing the same image on every edit.
-    private val encodedImageCache = java.util.WeakHashMap<Bitmap, String>()
-    // Keep a few recently decoded imports alive so undo/redo does not decode the same
-    // large PNG/Base64 payload on every restoration.
-    private data class DecodedImageEntry(val encoded: String, val bitmap: Bitmap)
-    private val decodedImageCache = object : LinkedHashMap<String, DecodedImageEntry>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DecodedImageEntry>?): Boolean = size > 1
-    }
-    // Transparent ink-only cache: erasing never touches imported artwork or note overlays.
-    private val renderedInkCache = linkedMapOf<Int, Bitmap>()
     // Reusable wet-ink surface. Samples are rasterized once as they arrive; onDraw
     // only composites this bitmap instead of rebuilding the entire stroke every frame.
     private var inProgressBitmap: Bitmap? = null
@@ -3062,27 +3177,20 @@ class DrawingView(context: android.content.Context) : View(context) {
         isFocusable = true
     }
 
-    private fun invalidateFrameCache(index: Int = frame) {
-        renderedInkCache.remove(index)?.let { if (!it.isRecycled) it.recycle() }
-    }
-
-    private fun invalidateAllFrameCaches() {
-        renderedInkCache.values.forEach { if (!it.isRecycled) it.recycle() }
-        renderedInkCache.clear()
-    }
-
-    fun releaseCachedBitmaps() {
-        invalidateAllFrameCaches()
-        spillInactiveFrameBitmaps(-1)
-        frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
-        encodedImageCache.clear()
-        decodedImageCache.clear()
-        inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
-        inProgressBitmap = null
-        inProgressCanvas = null
-        inProgressBounds = null
-        inProgressLastPoint = null
-        inProgressLastMidpoint = null
+    fun releaseCachedBitmaps(clearUndoHistory: Boolean = false, releaseActive: Boolean = true) {
+        if (clearUndoHistory) clearAllStrokeHistory()
+        if (releaseActive) {
+            spillInactiveFrameBitmaps(-1)
+            frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
+            inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
+            inProgressBitmap = null
+            inProgressCanvas = null
+            inProgressBounds = null
+            inProgressLastPoint = null
+            inProgressLastMidpoint = null
+        } else {
+            spillInactiveFrameBitmaps(frame)
+        }
     }
 
     private fun ensureInProgressSurface() {
@@ -3187,35 +3295,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         commitPaint.xfermode = null
     }
 
-    private fun cachedInkBitmap(index: Int = frame): Bitmap {
-        renderedInkCache[index]?.let { if (!it.isRecycled) return it }
-        val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        frames[index].orEmpty().forEach { stroke ->
-            if (index != frame || (stroke !== current && stroke !in selectedStrokes)) {
-                // CLEAR is safe here because this bitmap contains ink only.
-                drawStroke(canvas, stroke)
-            }
-        }
-        renderedInkCache[index] = bitmap
-        while (renderedInkCache.size > 2) {
-            val oldest = renderedInkCache.keys.first()
-            renderedInkCache.remove(oldest)?.let { if (!it.isRecycled) it.recycle() }
-        }
-        return bitmap
-    }
-
-    private fun drawImportedImage(canvas: Canvas, index: Int) {
-        importedImages[index]?.let { image ->
-            val dst = RectF((1920-image.width)/2f, (1080-image.height)/2f,
-                (1920+image.width)/2f, (1080+image.height)/2f)
-            canvas.drawBitmap(image, null, dst, imagePaint)
-        }
-    }
-
-    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-
     private fun drawNote(canvas: Canvas, index: Int) {
         notes[index]?.firstOrNull()?.let { note ->
             val oldColor = textPaint.color
@@ -3244,16 +3323,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
-        redoFrames.clear()
-        clearUndoSnapshots.clear()
-        clearRedoSnapshots.clear()
+        strokeUndoSnapshots.values.flatten().forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeRedoSnapshots.values.flatten().forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeUndoSnapshots.clear(); strokeRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
         importedImages.clear()
-        encodedImageCache.clear()
-        decodedImageCache.clear()
-        invalidateAllFrameCaches()
         current = null
         inProgressBounds = null
         inProgressLastPoint = null
@@ -3278,6 +3354,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
     fun brushSize(): Float = activeBrushSize()
     fun addImportedImage(bitmap: Bitmap) {
+        clearStrokeHistory(frame)
         val maxW=1920; val maxH=1080
         val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
         val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
@@ -3286,7 +3363,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         Canvas(bitmapFor()).drawBitmap(fitted, null, RectF(left, top, left+w, top+h), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         if (fitted !== bitmap && !fitted.isRecycled) fitted.recycle()
         if (!bitmap.isRecycled) bitmap.recycle()
-        invalidateFrameCache(); invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
+        invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
@@ -3298,81 +3375,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         pressureSensitivity = pressure
     }
 
-    fun undo() {
-        val list = strokes()
-        if (list.isNotEmpty()) {
-            val removed = list.removeAt(list.lastIndex)
-            val redoStack = redoFrames.getOrPut(frame) { mutableListOf() }
-            redoStack.add(removed)
-            while (redoStack.size > 10) redoStack.removeAt(0)
-            invalidateFrameCache()
-            invalidate()
-            onChanged?.invoke()
-            return
-        }
-
-        val clearStack = clearUndoSnapshots[frame]
-        if (!clearStack.isNullOrEmpty()) {
-            val snapshot = clearStack.removeAt(clearStack.lastIndex)
-            frames[frame] = snapshot.strokes.toMutableList()
-            if (snapshot.imagePng != null) {
-                BitmapFactory.decodeByteArray(snapshot.imagePng, 0, snapshot.imagePng.size)?.let { frameBitmaps[frame] = it }
-            } else importedImages.remove(frame)
-            val clearRedo = clearRedoSnapshots.getOrPut(frame) { mutableListOf() }
-            clearRedo.add(snapshot)
-            while (clearRedo.size > 10) clearRedo.removeAt(0)
-            invalidateFrameCache()
-            invalidate()
-            onChanged?.invoke()
-        }
-    }
-
-    fun redo() {
-        val stack = redoFrames[frame]
-        if (!stack.isNullOrEmpty()) {
-            strokes().add(stack.removeAt(stack.lastIndex))
-            invalidateFrameCache()
-            invalidate()
-            onChanged?.invoke()
-            return
-        }
-
-        val clearStack = clearRedoSnapshots[frame]
-        if (!clearStack.isNullOrEmpty()) {
-            val snapshot = clearStack.removeAt(clearStack.lastIndex)
-            val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
-            clearUndo.add(snapshot)
-            while (clearUndo.size > 10) clearUndo.removeAt(0)
-            deleteStoredFrame(frame)
-            frames.remove(frame)
-            importedImages.remove(frame)
-            invalidateFrameCache()
-            invalidate()
-            onChanged?.invoke()
-        }
-    }
-
     fun clear() {
         bakeLegacyFrame(frame)
-        val existingBitmap = bitmapFor(frame)
-        if (existingBitmap == null || existingBitmap.isRecycled) return
-
-        val snapshotBytes = java.io.ByteArrayOutputStream().use { out ->
-            existingBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.toByteArray()
-        }
-        val snapshot = ClearSnapshot(emptyList(), snapshotBytes)
-        val clearUndo = clearUndoSnapshots.getOrPut(frame) { mutableListOf() }
-        clearUndo.add(snapshot)
-        while (clearUndo.size > 10) clearUndo.removeAt(0)
-        clearRedoSnapshots.remove(frame)
-
+        clearStrokeHistory(frame)
         deleteStoredFrame(frame)
-        redoFrames.remove(frame)
         frames.remove(frame)
-        importedImages.remove(frame)
-        // Keep notes and noteColors: clearing the canvas must not erase its text.
-        invalidateFrameCache()
+        importedImages.remove(frame)?.let { if (!it.isRecycled) it.recycle() }
         invalidate()
         onChanged?.invoke()
         onHistoryAction?.invoke()
@@ -3388,14 +3396,12 @@ class DrawingView(context: android.content.Context) : View(context) {
             notes[frame] = mutableListOf(value)
             noteColors[frame] = Color.RED
         }
-        invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
         onHistoryAction?.invoke()
     }
 
     fun duplicateFrame(source: Int, target: Int) {
-        invalidateAllFrameCaches()
         bakeLegacyFrame(source)
         val sourceBitmap = bitmapFor(source).copy(Bitmap.Config.ARGB_8888, true)
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
@@ -3425,6 +3431,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.putAll(newFrames)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>=at) k+1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         shiftStoredFrameFiles { old -> if (old >= at) old + 1 else old }
+        remapStrokeHistory { old -> if (old >= at) old + 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> shiftedImages[if(k>=at) k+1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
@@ -3437,7 +3444,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun removeFrame(index: Int) {
-        invalidateAllFrameCaches()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         frames.forEach { (key, value) -> if (key != index) newFrames[if (key > index) key - 1 else key] = value }
         frames.clear()
@@ -3445,6 +3451,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         deleteStoredFrame(index)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>index) k-1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         shiftStoredFrameFiles { old -> if (old == index) null else if (old > index) old - 1 else old }
+        remapStrokeHistory { old -> if (old == index) null else if (old > index) old - 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> if(k!=index) shiftedImages[if(k>index) k-1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
@@ -3458,7 +3465,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun moveFrame(from: Int, to: Int) {
-        invalidateAllFrameCaches()
         if (from == to) return
         val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + notes.keys + importedImages.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
@@ -3476,6 +3482,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear(); frames.putAll(newFrames)
         val movedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (old,bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedBitmaps[new]=bmp }; frameBitmaps.clear(); frameBitmaps.putAll(movedBitmaps)
         shiftStoredFrameFiles { old -> when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old } }
+        remapStrokeHistory { old -> when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old } }
         val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
         val movedNoteColors = mutableMapOf<Int, Int>()
@@ -3599,13 +3606,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionTranslateY = 0f
         selectionRotation = 0f
         selectionScale = 1f
-        invalidateFrameCache()
-        invalidate()
+                invalidate()
     }
 
     fun hasSelection(): Boolean = selectedPixels != null || selectedStrokes.isNotEmpty()
 
     fun confirmSelection() {
+        clearStrokeHistory(frame)
         val pixels = selectedPixels
         if (pixels != null) {
             val target = bitmapFor(frame)
@@ -3658,7 +3665,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionTranslateY = 0f
         selectionRotation = 0f
         selectionScale = 1f
-        invalidateFrameCache()
         invalidate()
         onChanged?.invoke()
         onHistoryAction?.invoke()
@@ -3683,8 +3689,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionTranslateY = 0f
         selectionRotation = 0f
         selectionScale = 1f
-        invalidateFrameCache()
-        invalidate()
+                invalidate()
     }
 
     private fun resetPixelSelectionTransform() {
@@ -3756,7 +3761,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionCenterX = selectionPixelBounds.centerX(); selectionCenterY = selectionPixelBounds.centerY()
         selectionTranslateX = 0f; selectionTranslateY = 0f; selectionRotation = 0f; selectionScale = 1f
         lassoPoints.clear()
-        invalidateFrameCache(); invalidate()
+        invalidate()
     }
 
     private fun selectionHasPixels(bitmap: Bitmap): Boolean {
@@ -4033,7 +4038,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (!stylus) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    current = null
+            current = null
                     lastFingerX = event.x
                     lastFingerY = event.y
                     previousSpan = 0f
@@ -4095,8 +4100,6 @@ class DrawingView(context: android.content.Context) : View(context) {
                 )
                 val initialPressure = event.pressure.coerceIn(0.05f, 1f)
                 val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
-                redoFrames.remove(frame)
-                clearRedoSnapshots.remove(frame)
                 val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 current = stroke
                 beginInProgressStroke(point, initialWidth, stroke)
@@ -4142,19 +4145,25 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val completed = current
                 if (completed != null) {
                     finishInProgressPreview()
-                    // Commit the exact live preview to the frame's sole RGBA bitmap.
+                    val targetBitmap = bitmapFor(frame)
+                    captureStrokeBeforeImage(targetBitmap)?.let { snapshot ->
+                        val stack = strokeUndoSnapshots.getOrPut(frame) { mutableListOf() }
+                        stack.add(snapshot)
+                        while (stack.size > 20) stack.removeAt(0).pixels.recycle()
+                        trimStrokeHistoryMemory()
+                    }
+                    strokeRedoSnapshots.remove(frame)?.forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+                    // Commit the exact bitmap used for the live preview.
                     // Re-rasterizing the point list here caused a visible shape/width jump
                     // and a long pause on dense stylus strokes.
-                    commitInProgressBitmap(bitmapFor(frame))
+                    commitInProgressBitmap(targetBitmap)
                     clearInProgressDirtyRegion()
                     frames.remove(frame)
-                    invalidateFrameCache()
-                }
-                current = null
+                                    }
+        current = null
                 invalidate()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 onChanged?.invoke()
-                onHistoryAction?.invoke()
                 return true
             }
         }
@@ -4211,23 +4220,20 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun loadJson(root: JSONObject) {
-        invalidateAllFrameCaches()
-        frame = 0
+                frame = 0
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
-        redoFrames.clear()
-        clearUndoSnapshots.clear()
-        clearRedoSnapshots.clear()
+        strokeUndoSnapshots.values.flatten().forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeRedoSnapshots.values.flatten().forEach { if (!it.pixels.isRecycled) it.pixels.recycle() }
+        strokeUndoSnapshots.clear(); strokeRedoSnapshots.clear()
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
         importedImages.clear()
-        encodedImageCache.clear()
-        decodedImageCache.clear()
         brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
         eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
         color = root.optInt("brushColor", Color.BLACK)
@@ -4264,29 +4270,35 @@ class DrawingView(context: android.content.Context) : View(context) {
                 // Session bitmaps are already PNG files encoded as Base64. Store their
                 // bytes directly for inactive frames; only decode the visible frame.
                 try {
-                    val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
                     if (index == frame) {
+                        val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
                         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (decoded != null) {
-                            val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
-                                decoded
-                            } else {
-                                Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
-                                    Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
-                                        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-                                    if (!decoded.isRecycled) decoded.recycle()
-                                }
+                            ?: throw IllegalStateException("PNG inválido en el plano ${index + 1}")
+                        val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
+                            decoded
+                        } else {
+                            Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
+                                Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
+                                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                                if (!decoded.isRecycled) decoded.recycle()
                             }
-                            frameBitmaps[index] = normalized
-                            frames.remove(index)
                         }
+                        frameBitmaps[index] = normalized
+                        frames.remove(index)
                     } else {
                         val file = frameFile(index)
-                        FileOutputStream(file).use { it.write(bytes) }
+                        val encodedBytes = bitmapData.toByteArray(Charsets.US_ASCII)
+                        java.io.ByteArrayInputStream(encodedBytes).use { encoded ->
+                            android.util.Base64InputStream(encoded, Base64.DEFAULT).use { decoded ->
+                                FileOutputStream(file).use { output -> decoded.copyTo(output, 64 * 1024) }
+                            }
+                        }
                         frameBitmapFiles[index] = file
                         frames.remove(index)
                     }
-                } catch (_: Exception) { }
+                } catch (e: Exception) {
+                    throw IllegalStateException("No se pudo recuperar el plano ${index + 1}: ${e.message}", e)
+                }
             } else {
                 // Legacy sessions may still contain separate imported-image payloads
                 // and vector strokes. Decode these only when no flattened bitmap exists.
