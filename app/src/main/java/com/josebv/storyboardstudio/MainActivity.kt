@@ -2833,11 +2833,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val clearUndoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
     private val clearRedoSnapshots = mutableMapOf<Int, MutableList<ClearSnapshot>>()
 
-    init {
-        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
-        setBackgroundColor(Color.TRANSPARENT)
-    }
-
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
@@ -2848,6 +2843,11 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val frameBitmaps = mutableMapOf<Int, Bitmap>()
     private val frameBitmapFiles = mutableMapOf<Int, File>()
     private val frameBitmapDirectory = File(context.filesDir, "storyboard_frame_cache").apply { mkdirs() }
+
+    init {
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        setBackgroundColor(Color.TRANSPARENT)
+    }
 
     private fun frameFile(index: Int): File = frameBitmapFiles.getOrPut(index) {
         File(frameBitmapDirectory, "frame_${java.util.UUID.randomUUID()}.png")
