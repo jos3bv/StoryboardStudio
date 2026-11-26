@@ -100,6 +100,11 @@ class MainActivity : Activity() {
     private val maxHistorySteps = 10
 
     private val handler = Handler(Looper.getMainLooper())
+    private val historyRecordRunnable = Runnable {
+        if (!isFinishing && !isDestroyed && !restoringHistory && ::drawing.isInitialized) {
+            recordHistory()
+        }
+    }
     private val playbackUpdater = object : Runnable {
         override fun run() {
             val player = mediaPlayer
@@ -169,7 +174,11 @@ class MainActivity : Activity() {
                 scheduleAutosave()
             }
             onHistoryAction = {
-                if (!restoringHistory) recordHistory()
+                // Coalesce quick pen lifts before serializing the project history.
+                if (!restoringHistory) {
+                    handler.removeCallbacks(historyRecordRunnable)
+                    handler.postDelayed(historyRecordRunnable, 800)
+                }
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
         }
@@ -1727,7 +1736,7 @@ class MainActivity : Activity() {
     private fun scheduleAutosave() {
         if (restoringSession) return
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 500)
+        handler.postDelayed(autosaveRunnable, 1500)
     }
 
     private val autosaveRunnable = object : Runnable {
@@ -2816,16 +2825,20 @@ class DrawingView(context: android.content.Context) : View(context) {
                     if (target.isRecycled || targetFrame == null) return@forEach
                     affectedFrames.add(targetFrame)
                     if (erase) {
-                        val mask = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+                        // Erase directly on the destination bitmap. The previous
+                        // implementation allocated and cleared a full 1920x1080
+                        // temporary bitmap for every single eraser stroke.
+                        val erasePaint = Paint().apply {
+                            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                        }
+                        val targetCanvas = Canvas(target)
+                        val layerBounds = RectF(0f, 0f, target.width.toFloat(), target.height.toFloat())
+                        val layer = targetCanvas.saveLayer(layerBounds, erasePaint)
                         try {
-                            inkRenderer.draw(Canvas(mask), stroke, Matrix())
-                            val erasePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                                xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
-                            }
-                            Canvas(target).drawBitmap(mask, 0f, 0f, erasePaint)
-                            erasePaint.xfermode = null
+                            inkRenderer.draw(targetCanvas, stroke, Matrix())
                         } finally {
-                            mask.recycle()
+                            targetCanvas.restoreToCount(layer)
+                            erasePaint.xfermode = null
                         }
                     } else {
                         inkRenderer.draw(Canvas(target), stroke, Matrix())
@@ -2918,6 +2931,8 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
+        // Paper is painted by DrawingView.onDraw; keep the view itself transparent
+        // so the workspace around the 16:9 page remains dark.
     }
 
     var onChanged: (() -> Unit)? = null
@@ -3509,8 +3524,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
-        // The board is transparent: empty and erased pixels reveal the workspace below.
-        // One RGBA bitmap is the complete artwork for this frame; alpha is preserved.
+        // The storyboard sheet is always white. The artwork bitmap remains RGBA
+        // internally, but transparent pixels reveal this white paper instead of
+        // exposing the dark workspace.
+        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE })
         val unifiedBitmap = bitmapFor(frame)
         val inkBitmap = unifiedBitmap
         val wetBitmap = inProgressBitmap
@@ -4237,6 +4254,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
+        canvas.drawColor(Color.WHITE)
         frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
         notes[index]?.firstOrNull()?.let {
             textPaint.textSize = 34f
@@ -4265,6 +4283,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun renderFrame(index: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+        // Export matches the on-screen paper: white background, no transparent page.
+        canvas.drawColor(Color.WHITE)
         bakeLegacyFrame(index)
         frameBitmaps[index]?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
         notes[index]?.firstOrNull()?.let {
