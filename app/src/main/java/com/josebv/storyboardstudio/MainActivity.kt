@@ -583,8 +583,8 @@ class MainActivity : Activity() {
         addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") { undoGlobal() }
         addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") { redoGlobal() }
         canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
-            leftMargin = dp(32)
-            topMargin = dp(18)
+            leftMargin = dp(12)
+            topMargin = dp(12)
         })
         val selectionActions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -637,7 +637,7 @@ class MainActivity : Activity() {
             setButtonIcon(this, "ic_fit_canvas", 34, transparent = false)
         }
         canvasArea.addView(centerButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
-            leftMargin = dp(32)
+            leftMargin = dp(12)
             bottomMargin = dp(12)
         })
         work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.83f))
@@ -647,7 +647,7 @@ class MainActivity : Activity() {
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, 12, 0, 0)
+            setPadding(0, 12, 0, 2)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2291,9 +2291,9 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val leftMargin = 0f
     private val rulerHeight = 22f * density
     private val cardsTop = 29f * density
-    private val cardHeight = 68f * density
-    private val audioTop = 103f * density
-    private val audioHeight = 66f * density
+    private val cardHeight = 34f * density
+    private val audioTop = 69f * density
+    private val audioHeight = 33f * density
     private val handleWidth = 13f * density
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -2467,7 +2467,7 @@ class TimelineView(context: android.content.Context) : View(context) {
             paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             val durationText = String.format(java.util.Locale.US, "%.2fs", duration / 1000f)
             val tw = paint.measureText(durationText)
-            canvas.drawText(durationText, x + w - tw - 8f * density, cardsTop + cardHeight - 9f * density, paint)
+            canvas.drawText(durationText, x + w - tw - (handleWidth + 8f * density), cardsTop + cardHeight - 6f * density, paint)
             paint.color = Color.WHITE
             canvas.drawRect(x + w - handleWidth, cardsTop, x + w, cardsTop + cardHeight, paint)
             paint.color = Color.rgb(55, 55, 55)
@@ -3282,16 +3282,11 @@ class DrawingView(context: android.content.Context) : View(context) {
             val box = RectF(marginX, boxTop, 1920f - marginX, boxTop + boxHeight)
 
             val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = 0xF2FFFFFF.toInt()
+                // White caption background at 50% opacity, without a visible border.
+                color = 0x80FFFFFF.toInt()
                 style = Paint.Style.FILL
             }
-            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = 0xFF9AA0A6.toInt()
-                style = Paint.Style.STROKE
-                strokeWidth = 2f
-            }
             canvas.drawRoundRect(box, 12f, 12f, backgroundPaint)
-            canvas.drawRoundRect(box, 12f, 12f, borderPaint)
 
             canvas.save()
             canvas.translate(box.left + horizontalPadding, box.top + verticalPadding)
