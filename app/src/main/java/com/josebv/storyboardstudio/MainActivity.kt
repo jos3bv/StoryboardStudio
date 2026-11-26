@@ -101,7 +101,9 @@ class MainActivity : Activity() {
     private var restoringHistory = false
     private var lastHistoryStateFile: File? = null
     private var historyFileCounter = 0L
-    private val maxHistorySteps = 12
+    private val maxHistorySteps = 8
+    // History is temporary and bounded by both step count and disk footprint.
+    private val maxHistoryBytes = 64L * 1024L * 1024L
 
     private fun storeHistoryState(state: String): File {
         val file = File(historyDirectory, "history_${SystemClock.uptimeMillis()}_${historyFileCounter++}.json")
@@ -129,7 +131,22 @@ class MainActivity : Activity() {
     }
 
     private fun trimHistory(queue: ArrayDeque<File>) {
-        while (queue.size > maxHistorySteps) queue.removeFirst().delete()
+        var totalBytes = queue.sumOf { if (it.isFile) it.length() else 0L }
+        while (queue.isNotEmpty() && (queue.size > maxHistorySteps || totalBytes > maxHistoryBytes)) {
+            val oldest = queue.removeFirst()
+            if (oldest.isFile) totalBytes -= oldest.length()
+            oldest.delete()
+        }
+    }
+
+    private fun clearStaleHistoryFiles() {
+        // A process killed by Android may not receive onDestroy(). History is never
+        // restored across launches, so discard leftovers before loading a project.
+        try {
+            historyDirectory.listFiles()?.forEach { it.delete() }
+        } catch (e: Exception) {
+            android.util.Log.w("StoryboardStudio", "Could not clear temporary undo history", e)
+        }
     }
 
     private fun clearHistoryFiles(queue: ArrayDeque<File>) {
@@ -219,6 +236,7 @@ class MainActivity : Activity() {
 
     private fun initializeSessionStorage() {
         prepareStorageFolders()
+        clearStaleHistoryFiles()
         loadSession()
         resetHistory()
         handler.removeCallbacks(autosaveRunnable)
@@ -1252,7 +1270,23 @@ class MainActivity : Activity() {
         clearHistoryFiles(redoHistory)
         lastHistoryStateFile?.delete()
         historyDirectory.listFiles()?.forEach { it.delete() }
-        lastHistoryStateFile = storeHistoryState(historySnapshot())
+
+        // The autosave already contains the complete drawing and timeline state.
+        // Reuse it as the initial undo checkpoint instead of calling historySnapshot()
+        // here: that would PNG-encode every frame again during application startup.
+        lastHistoryStateFile = if (sessionFile.isFile && sessionFile.length() > 0L) {
+            val baseline = File(historyDirectory, "history_baseline_${SystemClock.uptimeMillis()}.json")
+            try {
+                sessionFile.copyTo(baseline, overwrite = true)
+                baseline
+            } catch (e: Exception) {
+                android.util.Log.w("StoryboardStudio", "Could not reuse session as undo baseline", e)
+                storeHistoryState(historySnapshot())
+            }
+        } else {
+            // A brand-new empty project has no saved session to reuse.
+            storeHistoryState(historySnapshot())
+        }
     }
 
     private fun recordHistory() {
@@ -2055,13 +2089,49 @@ class MainActivity : Activity() {
     private fun saveSession(showMessage: Boolean) {
         if (!::drawing.isInitialized) return
         try {
-            if (sessionFile.parentFile?.exists() != true && sessionFile.parentFile?.mkdirs() != true) {
+            val parent = sessionFile.parentFile
+                ?: throw IllegalStateException("No se pudo determinar la carpeta de guardado")
+            if (!parent.exists() && !parent.mkdirs()) {
                 throw IllegalStateException("No se pudo crear la carpeta de guardado")
             }
-            sessionFile.writeText(buildSessionJson().toString())
+
+            // Serialize once, then write to a sibling temporary file. Replacing the
+            // live session only after a complete flush prevents truncated autosaves.
+            val serialized = buildSessionJson().toString()
+            val tempFile = File(parent, "${sessionFile.name}.tmp")
+            val backupFile = File(parent, "${sessionFile.name}.bak")
+            java.io.FileOutputStream(tempFile).use { stream ->
+                val writer = java.io.OutputStreamWriter(stream, Charsets.UTF_8)
+                writer.write(serialized)
+                writer.flush()
+                stream.fd.sync()
+            }
+
+            if (sessionFile.exists()) {
+                val backupTemp = File(parent, "${backupFile.name}.tmp")
+                sessionFile.copyTo(backupTemp, overwrite = true)
+                if (backupFile.exists() && !backupFile.delete()) {
+                    backupTemp.delete()
+                    throw java.io.IOException("No se pudo reemplazar la copia de seguridad")
+                }
+                if (!backupTemp.renameTo(backupFile)) {
+                    backupTemp.delete()
+                    throw java.io.IOException("No se pudo preparar la copia de seguridad")
+                }
+            }
+
+            if (sessionFile.exists() && !sessionFile.delete()) {
+                throw java.io.IOException("No se pudo reemplazar el archivo de sesión")
+            }
+            if (!tempFile.renameTo(sessionFile)) {
+                // If replacement fails, restore the last known-good copy.
+                if (!sessionFile.exists() && backupFile.exists()) backupFile.copyTo(sessionFile, overwrite = true)
+                throw java.io.IOException("No se pudo finalizar el guardado de la sesión")
+            }
             if (showMessage) Toast.makeText(this, "Sesión guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             setStatus("Error al guardar sesión: ${e.message}")
+            android.util.Log.e("StoryboardStudio", "Session save failed", e)
         }
     }
 
@@ -2299,13 +2369,32 @@ class MainActivity : Activity() {
     }
 
     private fun loadSession() {
-        if (!sessionFile.exists()) return
-        try {
-            applySessionJson(JSONObject(sessionFile.readText()))
-            setStatus("Sesión recuperada · ${frameDurations.size} planos")
-        } catch (e: Exception) {
-            setStatus("No se pudo recuperar la sesión: ${e.message}")
+        val backupFile = File(sessionFile.parentFile ?: filesDir, "${sessionFile.name}.bak")
+        val candidates = listOf(sessionFile, backupFile).filter { it.isFile && it.length() > 0L }
+        if (candidates.isEmpty()) return
+
+        var lastError: Exception? = null
+        for ((index, candidate) in candidates.withIndex()) {
+            try {
+                val root = JSONObject(candidate.readText(Charsets.UTF_8))
+                if (!root.has("drawing") || !root.has("durations")) {
+                    throw IllegalStateException("El archivo no contiene una sesión válida")
+                }
+                applySessionJson(root)
+                if (candidate != sessionFile) {
+                    // Restore the last valid backup as the active autosave.
+                    candidate.copyTo(sessionFile, overwrite = true)
+                    setStatus("Sesión recuperada desde la copia de seguridad · ${frameDurations.size} planos")
+                } else {
+                    setStatus("Sesión recuperada · ${frameDurations.size} planos")
+                }
+                return
+            } catch (e: Exception) {
+                lastError = e
+                android.util.Log.e("StoryboardStudio", "Could not load session file: ${candidate.name}", e)
+            }
         }
+        setStatus("No se pudo recuperar la sesión: ${lastError?.message ?: "archivo inválido"}")
     }
     private fun writeToDocuments(
         displayName: String,
@@ -2414,6 +2503,8 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        // Finish a pending undo checkpoint before the final session snapshot.
+        flushPendingHistory()
         saveSession(showMessage = false)
         super.onPause()
     }
@@ -4465,6 +4556,11 @@ class DrawingView(context: android.content.Context) : View(context) {
                 } catch (_: Exception) { }
                 bakeLegacyFrame(index)
             }
+            // Drop large Base64 payloads from the parsed session tree as soon as
+            // each frame has been transferred to its bitmap/cache file. This lowers
+            // peak retained memory while opening projects with many frames.
+            frameObject.remove("bitmap")
+            frameObject.remove("importedImage")
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
