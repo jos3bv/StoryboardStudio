@@ -1576,7 +1576,15 @@ class MainActivity : Activity() {
             REQUEST_IMAGE -> {
                 try {
                     if (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        // Some document providers grant temporary read access but do not
+                        // support persistable grants. That must not block the import itself.
+                        try {
+                            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        } catch (_: SecurityException) {
+                            // Continue while the activity's temporary URI grant is valid.
+                        } catch (_: UnsupportedOperationException) {
+                            // Provider does not implement persistable permissions.
+                        }
                     }
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     contentResolver.openInputStream(uri).use { stream ->
@@ -3017,7 +3025,11 @@ class DrawingView(context: android.content.Context) : View(context) {
             frameBitmapFiles.remove(index)?.let { if (it.exists()) it.delete() }
         }
         val bitmap = if (loaded != null) {
-            if (loaded.width == 1920 && loaded.height == 1080 && loaded.config == Bitmap.Config.ARGB_8888) {
+            // BitmapFactory.decodeFile() returns an immutable bitmap by default.
+            // Every frame bitmap is an editable surface and MUST be mutable before
+            // it is wrapped by Canvas(target) for drawing, erasing, lasso and imports.
+            if (loaded.width == 1920 && loaded.height == 1080 &&
+                loaded.config == Bitmap.Config.ARGB_8888 && loaded.isMutable) {
                 loaded
             } else {
                 val normalized = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
@@ -3359,16 +3371,32 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
     fun brushSize(): Float = activeBrushSize()
     fun addImportedImage(bitmap: Bitmap) {
+        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+            throw IllegalArgumentException("La imagen no contiene datos válidos")
+        }
         clearStrokeHistory(frame)
-        val maxW=1920; val maxH=1080
-        val scale=min(maxW.toFloat()/bitmap.width, maxH.toFloat()/bitmap.height)
-        val w=max(1,(bitmap.width*scale).toInt()); val h=max(1,(bitmap.height*scale).toInt())
-        val fitted=Bitmap.createScaledBitmap(bitmap,w,h,true)
-        val left=(maxW-w)/2f; val top=(maxH-h)/2f
-        Canvas(bitmapFor()).drawBitmap(fitted, null, RectF(left, top, left+w, top+h), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-        if (fitted !== bitmap && !fitted.isRecycled) fitted.recycle()
-        if (!bitmap.isRecycled) bitmap.recycle()
-        invalidate(); onChanged?.invoke(); onHistoryAction?.invoke()
+        var fitted: Bitmap? = null
+        try {
+            val maxW = 1920
+            val maxH = 1080
+            val scale = min(maxW.toFloat() / bitmap.width, maxH.toFloat() / bitmap.height)
+            val w = max(1, (bitmap.width * scale).toInt())
+            val h = max(1, (bitmap.height * scale).toInt())
+            fitted = Bitmap.createScaledBitmap(bitmap, w, h, true)
+            val left = (maxW - w) / 2f
+            val top = (maxH - h) / 2f
+            // bitmapFor() guarantees a mutable ARGB_8888 target before Canvas wraps it.
+            Canvas(bitmapFor()).drawBitmap(
+                fitted, null, RectF(left, top, left + w, top + h),
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            )
+        } finally {
+            fitted?.let { if (it !== bitmap && !it.isRecycled) it.recycle() }
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        invalidate()
+        onChanged?.invoke()
+        onHistoryAction?.invoke()
     }
     fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
@@ -4289,7 +4317,10 @@ class DrawingView(context: android.content.Context) : View(context) {
                         val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
                         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             ?: throw IllegalStateException("PNG inválido en el plano ${index + 1}")
-                        val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
+                        // Decoded PNGs are immutable unless explicitly copied.
+                        // Keep the active frame mutable because Canvas edits it directly.
+                        val normalized = if (decoded.width == 1920 && decoded.height == 1080 &&
+                            decoded.config == Bitmap.Config.ARGB_8888 && decoded.isMutable) {
                             decoded
                         } else {
                             Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
