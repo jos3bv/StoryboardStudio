@@ -182,7 +182,6 @@ class MainActivity : Activity() {
         loadSession()
         resetHistory()
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 60_000)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -1819,7 +1818,6 @@ class MainActivity : Activity() {
             if (!isFinishing && !isDestroyed && !restoringSession && ::drawing.isInitialized) {
                 saveSession(showMessage = false)
             }
-            if (!isFinishing && !isDestroyed) handler.postDelayed(this, 15_000)
         }
     }
 
@@ -2945,6 +2943,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         Canvas(target).drawBitmap(snapshot.pixels, snapshot.bounds.left.toFloat(), snapshot.bounds.top.toFloat(), Paint(Paint.FILTER_BITMAP_FLAG))
         if (!snapshot.pixels.isRecycled) snapshot.pixels.recycle()
         destination.getOrPut(frame) { mutableListOf() }.add(StrokeRegionSnapshot(snapshot.bounds, after))
+        trimStrokeHistoryMemory()
         invalidate()
         onChanged?.invoke()
         return true
@@ -2998,6 +2997,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (saved) {
             frameBitmaps.remove(index)
             bitmap.recycle()
+        } else {
+            throw IllegalStateException("No se pudo liberar la memoria del plano ${index + 1}. Se conservó el dibujo para evitar pérdida de datos.")
         }
     }
 
@@ -3173,7 +3174,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     init {
-        setLayerType(View.LAYER_TYPE_HARDWARE, null)
         isFocusable = true
     }
 
@@ -3182,15 +3182,20 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (releaseActive) {
             spillInactiveFrameBitmaps(-1)
             frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
-            inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
-            inProgressBitmap = null
-            inProgressCanvas = null
-            inProgressBounds = null
-            inProgressLastPoint = null
-            inProgressLastMidpoint = null
+            releaseInProgressSurface()
         } else {
             spillInactiveFrameBitmaps(frame)
+            if (current == null) releaseInProgressSurface()
         }
+    }
+
+    private fun releaseInProgressSurface() {
+        inProgressBitmap?.let { if (!it.isRecycled) it.recycle() }
+        inProgressBitmap = null
+        inProgressCanvas = null
+        inProgressBounds = null
+        inProgressLastPoint = null
+        inProgressLastMidpoint = null
     }
 
     private fun ensureInProgressSurface() {
@@ -3579,8 +3584,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         if (lassoEnabled && lassoPoints.size > 1) {
             val path = Path().apply {
-                moveTo(lassoPoints.first().x, lassoPoints.first().y)
-                lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }
+                moveTo(lassoPoints[0].x, lassoPoints[0].y)
+                for (i in 1 until lassoPoints.size) lineTo(lassoPoints[i].x, lassoPoints[i].y)
             }
             canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(35, 155, 235)
@@ -3594,6 +3599,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun startLassoSelection() {
+        cancelSelection()
         lassoEnabled = true
         lassoPoints.clear()
         selectedStrokes.clear()
@@ -3719,7 +3725,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     private fun finishLasso() {
         lassoEnabled = false
-        if (lassoPoints.size < 3) { lassoPoints.clear(); invalidate(); return }
+        if (lassoPoints.size < 3) { lassoPoints.clear(); releaseInProgressSurface(); invalidate(); return }
         bakeLegacyFrame(frame)
         val source = bitmapFor(frame)
         val bounds = RectF(
@@ -3730,11 +3736,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         )
         val left = bounds.left.toInt(); val top = bounds.top.toInt()
         val right = bounds.right.toInt(); val bottom = bounds.bottom.toInt()
-        if (right <= left || bottom <= top) { lassoPoints.clear(); invalidate(); return }
+        if (right <= left || bottom <= top) { lassoPoints.clear(); releaseInProgressSurface(); invalidate(); return }
+        releaseInProgressSurface()
         val selection = Bitmap.createBitmap(right-left, bottom-top, Bitmap.Config.ARGB_8888)
         val maskPath = Path().apply {
-            moveTo(lassoPoints.first().x-left, lassoPoints.first().y-top)
-            lassoPoints.drop(1).forEach { lineTo(it.x-left, it.y-top) }
+            moveTo(lassoPoints[0].x-left, lassoPoints[0].y-top)
+            for (i in 1 until lassoPoints.size) lineTo(lassoPoints[i].x-left, lassoPoints[i].y-top)
             close()
         }
         val selectionCanvas = Canvas(selection)
@@ -3743,20 +3750,21 @@ class DrawingView(context: android.content.Context) : View(context) {
         selectionCanvas.drawBitmap(source, -left.toFloat(), -top.toFloat(), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         selectionCanvas.restore()
         if (selection.width == 0 || selection.height == 0 || !selectionHasPixels(selection)) {
-            selection.recycle(); lassoPoints.clear(); invalidate(); return
+            selection.recycle(); lassoPoints.clear(); releaseInProgressSurface(); invalidate(); return
         }
         val eraseCanvas = Canvas(source)
         val clearPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
         eraseCanvas.save()
         eraseCanvas.clipPath(Path().apply {
-            moveTo(lassoPoints.first().x, lassoPoints.first().y)
-            lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }
+            moveTo(lassoPoints[0].x, lassoPoints[0].y)
+            for (i in 1 until lassoPoints.size) lineTo(lassoPoints[i].x, lassoPoints[i].y)
             close()
         })
         eraseCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         eraseCanvas.restore()
         clearPaint.xfermode = null
         selectedPixels = selection
+        releaseInProgressSurface()
         selectionPixelBounds = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
         selectionCenterX = selectionPixelBounds.centerX(); selectionCenterY = selectionPixelBounds.centerY()
         selectionTranslateX = 0f; selectionTranslateY = 0f; selectionRotation = 0f; selectionScale = 1f
@@ -3765,9 +3773,14 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun selectionHasPixels(bitmap: Bitmap): Boolean {
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        return pixels.any { Color.alpha(it) != 0 }
+        // A full-size IntArray can allocate another 8 MB for a 1920x1080
+        // selection. Scan one row at a time to keep temporary memory bounded.
+        val row = IntArray(bitmap.width)
+        for (y in 0 until bitmap.height) {
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            for (pixel in row) if (Color.alpha(pixel) != 0) return true
+        }
+        return false
     }
 
     private fun viewToDrawingPoint(
@@ -4003,7 +4016,9 @@ class DrawingView(context: android.content.Context) : View(context) {
                     if (lassoEnabled) {
                         val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
                         val last = lassoPoints.lastOrNull()
-                        if (last == null || kotlin.math.hypot((point.x-last.x).toDouble(), (point.y-last.y).toDouble()) >= 2.5) lassoPoints.add(point)
+                        if ((last == null || kotlin.math.hypot((point.x-last.x).toDouble(), (point.y-last.y).toDouble()) >= 3.5) && lassoPoints.size < 1800) {
+                            lassoPoints.add(point)
+                        }
                     } else if (hasSelection() && event.pointerCount >= 2) {
                         val p0 = viewToDrawingPoint(event.getX(0), event.getY(0), left, top, boardScale)
                         val p1 = viewToDrawingPoint(event.getX(1), event.getY(1), left, top, boardScale)
