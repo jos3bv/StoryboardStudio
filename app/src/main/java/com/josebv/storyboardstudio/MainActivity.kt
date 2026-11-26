@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.51 - active-frame bitmap store, sampled image import and disk-backed history.
+// BV'Storyboarder 0.9.53 - lazy PNG frame loading and direct disk-backed autosave serialization.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -4175,15 +4175,30 @@ class DrawingView(context: android.content.Context) : View(context) {
             val frameObject = JSONObject()
             frameObject.put("index", index)
             bakeLegacyFrame(index)
-            val bitmap = bitmapFor(index)
-            if (!bitmap.isRecycled) {
-                val bytes = java.io.ByteArrayOutputStream().use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+
+            // Reuse the already-rasterized PNG for inactive frames. Do not decode it
+            // back into a 1920x1080 Bitmap just to immediately compress it again.
+            val resident = frameBitmaps[index]
+            val storedFile = frameBitmapFiles[index]
+            val pngBytes = when {
+                resident != null && !resident.isRecycled -> java.io.ByteArrayOutputStream().use { out ->
+                    if (!resident.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                        throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                    }
                     out.toByteArray()
                 }
-                frameObject.put("bitmap", Base64.encodeToString(bytes, Base64.NO_WRAP))
-                if (index != frame) spillFrameBitmap(index)
+                storedFile != null && storedFile.isFile && storedFile.length() > 0L -> storedFile.readBytes()
+                else -> {
+                    val bitmap = bitmapFor(index)
+                    java.io.ByteArrayOutputStream().use { out ->
+                        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                            throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                        }
+                        out.toByteArray()
+                    }.also { if (index != frame) spillFrameBitmap(index) }
+                }
             }
+            frameObject.put("bitmap", Base64.encodeToString(pngBytes, Base64.NO_WRAP))
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
             frameObject.put("notes", noteArray)
@@ -4244,41 +4259,45 @@ class DrawingView(context: android.content.Context) : View(context) {
                 )
             }
             if (loadedStrokes.isNotEmpty()) frames[index] = loadedStrokes
-            val imageData = frameObject.optString("importedImage", "")
-            if (imageData.isNotBlank()) try {
-                val cacheKey = "${imageData.hashCode()}:${imageData.length}"
-                val cached = decodedImageCache[cacheKey]
-                val bitmap = if (cached != null && cached.encoded == imageData && !cached.bitmap.isRecycled) {
-                    cached.bitmap
-                } else {
-                    val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.also {
-                        decodedImageCache[cacheKey] = DecodedImageEntry(imageData, it)
-                    }
-                }
-                if (bitmap != null) importedImages[index] = bitmap
-            } catch (_: Exception) { }
             val bitmapData = frameObject.optString("bitmap", "")
-            if (bitmapData.isNotBlank()) try {
-                val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
-                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (decoded != null) {
-                    val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
-                        decoded
-                    } else {
-                        Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
-                            Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
-                                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-                            if (!decoded.isRecycled) decoded.recycle()
+            if (bitmapData.isNotBlank()) {
+                // Session bitmaps are already PNG files encoded as Base64. Store their
+                // bytes directly for inactive frames; only decode the visible frame.
+                try {
+                    val bytes = Base64.decode(bitmapData, Base64.DEFAULT)
+                    if (index == frame) {
+                        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (decoded != null) {
+                            val normalized = if (decoded.width == 1920 && decoded.height == 1080 && decoded.config == Bitmap.Config.ARGB_8888) {
+                                decoded
+                            } else {
+                                Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
+                                    Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
+                                        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                                    if (!decoded.isRecycled) decoded.recycle()
+                                }
+                            }
+                            frameBitmaps[index] = normalized
+                            frames.remove(index)
                         }
+                    } else {
+                        val file = frameFile(index)
+                        FileOutputStream(file).use { it.write(bytes) }
+                        frameBitmapFiles[index] = file
+                        frames.remove(index)
                     }
-                    frameBitmaps[index] = normalized
-                    frames.remove(index)
-                    importedImages.remove(index)?.let { if (!it.isRecycled) it.recycle() }
-                    if (index != frame) spillFrameBitmap(index)
-                }
-            } catch (_: Exception) { }
-            if (!frameBitmaps.containsKey(index)) bakeLegacyFrame(index)
+                } catch (_: Exception) { }
+            } else {
+                // Legacy sessions may still contain separate imported-image payloads
+                // and vector strokes. Decode these only when no flattened bitmap exists.
+                val imageData = frameObject.optString("importedImage", "")
+                if (imageData.isNotBlank()) try {
+                    val imageBytes = Base64.decode(imageData, Base64.DEFAULT)
+                    val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                    if (bitmap != null) importedImages[index] = bitmap
+                } catch (_: Exception) { }
+                bakeLegacyFrame(index)
+            }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
