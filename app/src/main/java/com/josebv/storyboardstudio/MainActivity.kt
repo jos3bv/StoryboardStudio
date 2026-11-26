@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.60 - per-frame independent layer stack and unified history.
+// BV'Storyboarder 0.9.59 - unified chronological undo/redo history.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -32,8 +32,6 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
 import java.io.File
-import java.io.ByteArrayOutputStream
-import java.util.UUID
 import java.io.FileOutputStream
 import java.io.OutputStream
 import android.util.Base64
@@ -642,91 +640,14 @@ class MainActivity : Activity() {
             leftMargin = dp(32)
             bottomMargin = dp(12)
         })
-        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.71f))
-
-        // Dedicated right-side layer panel. It occupies only the upper work area;
-        // the timeline below remains a separate, untouched sibling of this row.
-        val layerPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(58, 58, 58))
-            setPadding(dp(5), dp(6), dp(5), dp(4))
-        }
-        val layerHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        layerHeader.addView(TextView(this).apply { text = "CAPAS"; setTextColor(Color.WHITE); textSize = 12f; typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, dp(34), 1f))
-        var refreshLayerPanel: () -> Unit = {}
-        val addLayerButton = Button(this).apply {
-            text = "+"; textSize = 20f; minWidth = dp(38); minHeight = dp(32); setPadding(0,0,0,0)
-            setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(85,85,85))
-            contentDescription = "Crear capa"; setOnClickListener { drawing.createLayer(); scheduleAutosave(); refreshLayerPanel() }
-        }
-        layerHeader.addView(addLayerButton, LinearLayout.LayoutParams(dp(38), dp(32)))
-        layerPanel.addView(layerHeader)
-        val layerScroll = ScrollView(this).apply { isFillViewport = false; clipToPadding = false }
-        val layerList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, dp(4)) }
-        layerScroll.addView(layerList)
-        layerPanel.addView(layerScroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        refreshLayerPanel = {
-            layerList.removeAllViews()
-            val layersNow = drawing.layersSnapshot()
-            layersNow.forEachIndexed { index, layer ->
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(5), dp(4), dp(5), dp(3))
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(if (drawing.activeLayerIndex() == index) Color.rgb(88,94,104) else Color.rgb(72,72,72))
-                        cornerRadius = dp(4).toFloat(); setStroke(dp(1), Color.rgb(105,105,105))
-                    }
-                    tag = index
-                }
-                val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                val visibility = ImageButton(this).apply {
-                    setImageResource(if (layer.second) android.R.drawable.ic_menu_view else android.R.drawable.ic_menu_close_clear_cancel)
-                    background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-                    contentDescription = if (layer.second) "Ocultar capa" else "Mostrar capa"
-                    setPadding(dp(2),dp(2),dp(2),dp(2))
-                    setOnClickListener { drawing.setLayerVisible(index, !layer.second); refreshLayerPanel(); scheduleAutosave() }
-                }
-                topRow.addView(visibility, LinearLayout.LayoutParams(dp(28), dp(28)))
-                val title = TextView(this).apply { text = layer.first; setTextColor(Color.WHITE); textSize = 11f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; gravity = Gravity.CENTER_VERTICAL }
-                topRow.addView(title, LinearLayout.LayoutParams(0, dp(28), 1f))
-                row.addView(topRow)
-                val opacity = SeekBar(this).apply {
-                    max = 100; progress = layer.third
-                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { if (fromUser) drawing.setLayerOpacity(index, progress) }
-                        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                        override fun onStopTrackingTouch(seekBar: SeekBar?) { drawing.commitLayerPropertyChange(); scheduleAutosave(); refreshLayerPanel() }
-                    })
-                }
-                row.addView(opacity, LinearLayout.LayoutParams(-1, dp(22)))
-                row.setOnClickListener { drawing.selectLayer(index); refreshLayerPanel() }
-                row.setOnLongClickListener {
-                    val clip = android.content.ClipData.newPlainText("layer", index.toString())
-                    row.startDrag(clip, View.DragShadowBuilder(row), index, 0); true
-                }
-                row.setOnDragListener { _, event ->
-                    when (event.action) {
-                        android.view.DragEvent.ACTION_DRAG_STARTED -> true
-                        android.view.DragEvent.ACTION_DROP -> {
-                            val from = event.localState as? Int ?: -1
-                            drawing.moveLayer(from, index); refreshLayerPanel(); scheduleAutosave(); true
-                        }
-                        else -> true
-                    }
-                }
-                layerList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(5) })
-            }
-        }
-        drawing.onLayersChanged = { if (::drawing.isInitialized) refreshLayerPanel() }
-        refreshLayerPanel()
-        work.addView(layerPanel, LinearLayout.LayoutParams(0, -1, 0.17f))
+        work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.83f))
         root.addView(work, LinearLayout.LayoutParams(-1, 0, 2.4f))
 
         // Timeline toolbar: shot management left, playback centered, zoom/navigation right.
         val timelinePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(55, 55, 55))
-            setPadding(0, 0, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2975,38 +2896,27 @@ private data class Stroke(
     val erase: Boolean = false
 )
 
-private data class DrawingLayer(val id: String, var name: String, var visible: Boolean = true, var opacity: Int = 100)
-
 class DrawingView(context: android.content.Context) : View(context) {
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
-    var onLayersChanged: (() -> Unit)? = null
     // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
     // Only the visible frame remains decoded in RAM. Inactive frames are stored as
     // PNG files in the app cache and decoded on demand when the user visits them.
     private val frameBitmaps = mutableMapOf<Int, Bitmap>()
     private val frameBitmapFiles = mutableMapOf<Int, File>()
-    private val drawingLayers = mutableListOf(DrawingLayer("layer_base", "Capa 1"))
-    private val frameLayerStacks = mutableMapOf<Int, MutableList<DrawingLayer>>()
-    private val frameActiveLayerIds = mutableMapOf<Int, String>()
-    private var activeLayerId: String = "layer_base"
-    private val layerFrameFiles = mutableMapOf<String, MutableMap<Int, File>>()
-    private val layerPreviewCache = mutableMapOf<String, Bitmap>()
     private val frameBitmapDirectory = File(context.filesDir, "storyboard_frame_cache").apply { mkdirs() }
 
     init {
-        frameBitmapDirectory.listFiles()?.forEach { it.deleteRecursively() }
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         setBackgroundColor(Color.TRANSPARENT)
     }
-
-    private fun layerDirectory(id: String = activeLayerId): File = File(frameBitmapDirectory, id).apply { mkdirs() }
 
     private fun frameFile(index: Int): File {
         val existing = frameBitmapFiles[index]
         if (existing != null) return existing
-        val created = File(layerDirectory(), "frame_${index}_${java.util.UUID.randomUUID()}.png")
+        val created = File(frameBitmapDirectory, "frame_${java.util.UUID.randomUUID()}.png")
         frameBitmapFiles[index] = created
         return created
     }
@@ -3090,108 +3000,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmapFiles.forEach { (old, file) -> mapIndex(old)?.let { moved[it] = file } ?: file.delete() }
         frameBitmapFiles.clear()
         frameBitmapFiles.putAll(moved)
-        layerFrameFiles.forEach { (layerId, files) ->
-            val shifted = mutableMapOf<Int, File>()
-            files.forEach { (old, file) -> mapIndex(old)?.let { shifted[it] = file } ?: file.delete() }
-            files.clear(); files.putAll(shifted)
-        }
-        val movedStacks = mutableMapOf<Int, MutableList<DrawingLayer>>()
-        frameLayerStacks.forEach { (old, stack) -> mapIndex(old)?.let { movedStacks[it] = stack } }
-        frameLayerStacks.clear(); frameLayerStacks.putAll(movedStacks)
-        val movedActive = mutableMapOf<Int, String>()
-        frameActiveLayerIds.forEach { (old, id) -> mapIndex(old)?.let { movedActive[it] = id } }
-        frameActiveLayerIds.clear(); frameActiveLayerIds.putAll(movedActive)
-        layerPreviewCache.values.forEach { if (!it.isRecycled) it.recycle() }; layerPreviewCache.clear()
     }
-    private fun saveFrameLayerStack(index: Int) {
-        frameLayerStacks[index] = drawingLayers.map { it.copy() }.toMutableList()
-        frameActiveLayerIds[index] = activeLayerId
-    }
-    private fun loadFrameLayerStack(index: Int) {
-        drawingLayers.clear()
-        drawingLayers.addAll((frameLayerStacks[index] ?: mutableListOf(DrawingLayer("layer_${index}_base", "Capa 1"))).map { it.copy() })
-        if (drawingLayers.isEmpty()) drawingLayers.add(DrawingLayer("layer_${index}_base", "Capa 1"))
-        activeLayerId = frameActiveLayerIds[index]?.takeIf { id -> drawingLayers.any { it.id == id } } ?: drawingLayers.first().id
-        frameLayerStacks[index] = drawingLayers.map { it.copy() }.toMutableList()
-        frameActiveLayerIds[index] = activeLayerId
-        frameBitmapFiles.clear()
-        frameBitmapFiles.putAll(layerFrameFiles[activeLayerId] ?: mutableMapOf())
-        layerPreviewCache.values.forEach { if (!it.isRecycled) it.recycle() }; layerPreviewCache.clear()
-        bitmapFor(frame)
-        onLayersChanged?.invoke()
-    }
-
-    fun layersSnapshot(): List<Triple<String, Boolean, Int>> = drawingLayers.map { Triple(it.name, it.visible, it.opacity) }
-    fun activeLayerName(): String = drawingLayers.firstOrNull { it.id == activeLayerId }?.name ?: "Capa"
-    fun activeLayerIndex(): Int = drawingLayers.indexOfFirst { it.id == activeLayerId }
-
-    private fun switchLayerStorage(targetId: String) {
-        if (targetId == activeLayerId) return
-        cancelSelection()
-        frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
-        layerPreviewCache.remove(activeLayerId)?.let { if (!it.isRecycled) it.recycle() }
-        layerFrameFiles[activeLayerId] = frameBitmapFiles.toMutableMap()
-        frameBitmapFiles.clear()
-        activeLayerId = targetId
-        frameActiveLayerIds[frame] = targetId
-        frameLayerStacks[frame] = drawingLayers.map { it.copy() }.toMutableList()
-        layerPreviewCache.remove(targetId)?.let { if (!it.isRecycled) it.recycle() }
-        frameBitmapFiles.putAll(layerFrameFiles[targetId] ?: mutableMapOf())
-        bitmapFor(frame)
-        invalidate()
-    }
-
-    fun selectLayer(index: Int) {
-        if (index !in drawingLayers.indices) return
-        switchLayerStorage(drawingLayers[index].id)
-        onLayersChanged?.invoke()
-    }
-    fun createLayer() {
-        val layer = DrawingLayer("layer_${java.util.UUID.randomUUID()}", "Capa ${drawingLayers.size + 1}")
-        drawingLayers.add(0, layer)
-        layerFrameFiles[layer.id] = mutableMapOf()
-        switchLayerStorage(layer.id)
-        saveFrameLayerStack(frame)
-        onHistoryAction?.invoke(); onChanged?.invoke(); onLayersChanged?.invoke()
-    }
-    fun renameLayer(index: Int, name: String) {
-        if (index !in drawingLayers.indices || name.isBlank()) return
-        drawingLayers[index].name = name.take(40); saveFrameLayerStack(frame)
-        onHistoryAction?.invoke(); onChanged?.invoke(); onLayersChanged?.invoke()
-    }
-    fun setLayerVisible(index: Int, visible: Boolean) {
-        if (index !in drawingLayers.indices) return
-        drawingLayers[index].visible = visible; saveFrameLayerStack(frame)
-        invalidate(); onHistoryAction?.invoke(); onChanged?.invoke(); onLayersChanged?.invoke()
-    }
-    fun setLayerOpacity(index: Int, opacity: Int) {
-        if (index !in drawingLayers.indices) return
-        drawingLayers[index].opacity = opacity.coerceIn(0, 100)
-        invalidate()
-    }
-    fun commitLayerPropertyChange() { saveFrameLayerStack(frame); onHistoryAction?.invoke(); onChanged?.invoke() }
-    fun moveLayer(from: Int, to: Int) {
-        if (from !in drawingLayers.indices || to !in drawingLayers.indices || from == to) return
-        val item = drawingLayers.removeAt(from); drawingLayers.add(to, item); saveFrameLayerStack(frame)
-        invalidate(); onHistoryAction?.invoke(); onChanged?.invoke(); onLayersChanged?.invoke()
-    }
-    fun deleteLayer(index: Int) {
-        if (drawingLayers.size <= 1 || index !in drawingLayers.indices) return
-        val removed = drawingLayers.removeAt(index)
-        if (removed.id == activeLayerId) {
-            frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
-            layerFrameFiles[activeLayerId] = frameBitmapFiles.toMutableMap(); frameBitmapFiles.clear()
-            activeLayerId = drawingLayers.first().id
-            frameBitmapFiles.putAll(layerFrameFiles[activeLayerId] ?: mutableMapOf())
-            bitmapFor(frame)
-        }
-        layerFrameFiles.remove(removed.id)?.values?.forEach { it.delete() }
-        layerPreviewCache.remove(removed.id)?.let { if (!it.isRecycled) it.recycle() }
-        saveFrameLayerStack(frame)
-        File(frameBitmapDirectory, removed.id).deleteRecursively()
-        invalidate(); onHistoryAction?.invoke(); onChanged?.invoke(); onLayersChanged?.invoke()
-    }
-
     private fun rasterizeStroke(target: Bitmap, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
         val c = Canvas(target)
@@ -3443,29 +3252,52 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     private fun drawNote(canvas: Canvas, index: Int) {
-        notes[index]?.firstOrNull()?.let { note ->
-            val oldColor = textPaint.color
-            val oldSize = textPaint.textSize
-            textPaint.textSize = 30f
-            textPaint.color = noteColors[index] ?: Color.RED
-            val maxWidth = 1872f
-            val words = note.split(Regex("\\s+"))
-            val lines = mutableListOf<String>()
-            var line = StringBuilder()
-            words.forEach { word ->
-                val candidate = if (line.isEmpty()) word else "${line} $word"
-                if (line.isNotEmpty() && textPaint.measureText(candidate) > maxWidth) { lines.add(line.toString()); line = StringBuilder(word) }
-                else { if (line.isNotEmpty()) line.append(' '); line.append(word) }
+        notes[index]?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { note ->
+            // Render the note as a framed caption entirely inside the 1920x1080 board.
+            // StaticLayout wraps long text and limits the visible block to five lines.
+            val marginX = 64f
+            val marginBottom = 36f
+            val horizontalPadding = 26f
+            val verticalPadding = 17f
+            val boxWidth = 1920f - marginX * 2f
+            val textWidth = (boxWidth - horizontalPadding * 2f).toInt().coerceAtLeast(1)
+
+            val notePaint = android.text.TextPaint(textPaint).apply {
+                textSize = 34f
+                color = noteColors[index] ?: Color.RED
+                isAntiAlias = true
             }
-            if (line.isNotEmpty()) lines.add(line.toString())
-            val lineHeight = 36f
-            val visibleLines = lines.take(4)
-            val boxTop = (1038f - visibleLines.size * lineHeight - 26f).coerceAtLeast(760f)
-            val box = RectF(12f, boxTop, 1908f, 1068f)
-            canvas.drawRoundRect(box, 12f, 12f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xEFFFFFFF.toInt() })
-            visibleLines.forEachIndexed { i, value -> canvas.drawText(value, 32f, boxTop + 34f + i * lineHeight, textPaint) }
-            textPaint.color = oldColor
-            textPaint.textSize = oldSize
+            val layout = android.text.StaticLayout.Builder
+                .obtain(note, 0, note.length, notePaint, textWidth)
+                .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .setMaxLines(5)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END)
+                .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY)
+                .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
+                .build()
+
+            val boxHeight = layout.height + verticalPadding * 2f
+            val boxTop = (1080f - marginBottom - boxHeight).coerceAtLeast(24f)
+            val box = RectF(marginX, boxTop, 1920f - marginX, boxTop + boxHeight)
+
+            val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xF2FFFFFF.toInt()
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFF9AA0A6.toInt()
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            }
+            canvas.drawRoundRect(box, 12f, 12f, backgroundPaint)
+            canvas.drawRoundRect(box, 12f, 12f, borderPaint)
+
+            canvas.save()
+            canvas.translate(box.left + horizontalPadding, box.top + verticalPadding)
+            canvas.clipRect(0f, 0f, textWidth.toFloat(), layout.height.toFloat())
+            layout.draw(canvas)
+            canvas.restore()
         }
     }
 
@@ -3474,10 +3306,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (index == frame) { bitmapFor(index); invalidate(); return }
         cancelSelection()
         spillFrameBitmap(frame)
-        layerFrameFiles[activeLayerId] = frameBitmapFiles.toMutableMap()
-        saveFrameLayerStack(frame)
         frame = index
-        loadFrameLayerStack(frame)
+        bitmapFor(frame)
         invalidate()
     }
     fun clearProject() {
@@ -3486,9 +3316,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmaps.clear()
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
-        frameBitmapDirectory.listFiles()?.forEach { it.deleteRecursively() }
-        layerPreviewCache.values.forEach { if (!it.isRecycled) it.recycle() }; layerPreviewCache.clear()
-        layerFrameFiles.clear(); frameLayerStacks.clear(); frameActiveLayerIds.clear(); drawingLayers.clear(); drawingLayers.add(DrawingLayer("layer_0_base", "Capa 1")); activeLayerId = "layer_0_base"; saveFrameLayerStack(frame)
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
@@ -3579,35 +3407,17 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun duplicateFrame(source: Int, target: Int) {
-        saveFrameLayerStack(source)
-        val sourceStack = frameLayerStacks[source]?.map { it.copy() } ?: drawingLayers.map { it.copy() }
-        val sourceActive = if (source == frame) activeLayerId else frameActiveLayerIds[source] ?: sourceStack.first().id
+        bakeLegacyFrame(source)
+        val sourceBitmap = bitmapFor(source).copy(Bitmap.Config.ARGB_8888, true)
+        val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.take(1)?.toMutableList()
         val sourceNoteColor = noteColors[source]
         shiftFramesForInsert(target)
-        val clonedStack = mutableListOf<DrawingLayer>()
-        sourceStack.forEach { sourceLayer ->
-            if (activeLayerId != sourceLayer.id) switchLayerStorage(sourceLayer.id)
-            val copy = bitmapFor(source).copy(Bitmap.Config.ARGB_8888, true)
-            val newLayer = sourceLayer.copy(id = "layer_${UUID.randomUUID()}")
-            val previousId = activeLayerId
-            frameBitmaps[target] = copy
-            // Move the duplicated surface into a fresh layer-specific cache directory.
-            spillFrameBitmap(target)
-            val oldFile = frameBitmapFiles.remove(target)
-            if (oldFile != null) {
-                val destination = File(layerDirectory(newLayer.id), "frame_${target}_${UUID.randomUUID()}.png")
-                oldFile.copyTo(destination, overwrite = true); oldFile.delete()
-                layerFrameFiles.getOrPut(newLayer.id) { mutableMapOf() }[target] = destination
-            }
-            clonedStack.add(newLayer)
-            if (previousId != sourceLayer.id) switchLayerStorage(sourceLayer.id)
-        }
-        frameLayerStacks[target] = clonedStack
-        frameActiveLayerIds[target] = clonedStack.getOrNull(sourceStack.indexOfFirst { it.id == sourceActive })?.id ?: clonedStack.first().id
+        if (sourceStrokes != null) frames[target] = sourceStrokes
+        sourceBitmap?.let { frameBitmaps[target] = it }
         if (sourceNotes != null) notes[target] = sourceNotes
         sourceNoteColor?.let { noteColors[target] = it }
-        if (activeLayerId != sourceActive) switchLayerStorage(sourceActive)
+        importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
     }
 
     private fun cloneStrokes(source: List<Stroke>) = source.map { s ->
@@ -3715,42 +3525,28 @@ class DrawingView(context: android.content.Context) : View(context) {
         // The editable bitmap remains RGBA/transparent, but the visible storyboard
         // paper is white. Erased pixels therefore reveal white instead of the dark UI.
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
-        // Composite visible independent layer surfaces in stack order. Only the
-        // active layer is editable in RAM; inactive previews are decoded once and cached.
-        drawingLayers.asReversed().forEach { layerInfo ->
-            if (!layerInfo.visible) return@forEach
-            val bitmap = if (layerInfo.id == activeLayerId) bitmapFor(frame) else {
-                val cached = layerPreviewCache[layerInfo.id]
-                if (cached != null && !cached.isRecycled) cached else {
-                    val file = layerFrameFiles[layerInfo.id]?.get(frame)
-                    val decoded = if (file != null && file.isFile) BitmapFactory.decodeFile(file.absolutePath) else null
-                    if (decoded != null) {
-                        layerPreviewCache[layerInfo.id] = decoded
-                        while (layerPreviewCache.size > 2) {
-                            val oldest = layerPreviewCache.keys.firstOrNull { it != layerInfo.id } ?: break
-                            layerPreviewCache.remove(oldest)?.let { if (!it.isRecycled) it.recycle() }
-                        }
-                    }
-                    decoded
-                }
-            }
-            if (bitmap != null && !bitmap.isRecycled) {
-                val layerPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = layerInfo.opacity * 255 / 100 }
-                canvas.drawBitmap(bitmap, 0f, 0f, layerPaint)
-            }
-            if (layerInfo.id == activeLayerId && current != null && inProgressBitmap != null && inProgressBounds != null) {
-                if (inProgressErase) {
-                    val save = canvas.saveLayer(boardBounds, null)
-                    canvas.drawBitmap(bitmapFor(frame), 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-                    canvas.save(); canvas.clipRect(inProgressBounds!!)
-                    canvas.drawBitmap(inProgressBitmap!!, 0f, 0f, inProgressErasePaint)
-                    canvas.restore(); canvas.restoreToCount(save)
-                } else {
-                    canvas.save(); canvas.clipRect(inProgressBounds!!)
-                    inProgressDisplayPaint.alpha = inProgressAlpha * layerInfo.opacity / 100
-                    canvas.drawBitmap(inProgressBitmap!!, 0f, 0f, inProgressDisplayPaint)
-                    inProgressDisplayPaint.alpha = 255; canvas.restore()
-                }
+        // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
+        val unifiedBitmap = bitmapFor(frame)
+        val inkBitmap = unifiedBitmap
+        val wetBitmap = inProgressBitmap
+        val wetBounds = inProgressBounds
+        if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
+            val inkLayer = canvas.saveLayer(boardBounds, null)
+            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            canvas.save()
+            canvas.clipRect(wetBounds)
+            canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+            canvas.restore()
+            canvas.restoreToCount(inkLayer)
+        } else {
+            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            if (current != null && wetBitmap != null && wetBounds != null) {
+                canvas.save()
+                canvas.clipRect(wetBounds)
+                inProgressDisplayPaint.alpha = inProgressAlpha
+                canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
+                inProgressDisplayPaint.alpha = 255
+                canvas.restore()
             }
         }
         drawNote(canvas, frame)
@@ -4424,28 +4220,6 @@ class DrawingView(context: android.content.Context) : View(context) {
             frameArray.put(frameObject)
         }
         root.put("frames", frameArray)
-        saveFrameLayerStack(frame)
-        val layerArray = JSONArray()
-        // Layer definitions are scoped to a storyboard frame. Each layer stores only
-        // its own transparent PNG for that frame; legacy root.frames remains supported.
-        frameLayerStacks.toSortedMap().forEach { (frameIndex, stack) ->
-            stack.forEach { layer ->
-                val layerObject = JSONObject().put("frame", frameIndex).put("id", layer.id).put("name", layer.name)
-                    .put("visible", layer.visible).put("opacity", layer.opacity)
-                    .put("active", frameActiveLayerIds[frameIndex] == layer.id)
-                val fileMap = if (frameIndex == frame && layer.id == activeLayerId) frameBitmapFiles else layerFrameFiles[layer.id] ?: mutableMapOf()
-                val resident = if (frameIndex == frame && layer.id == activeLayerId) frameBitmaps[frameIndex] else null
-                val file = fileMap[frameIndex]
-                val bytes = when {
-                    resident != null && !resident.isRecycled -> ByteArrayOutputStream().use { out -> resident.compress(Bitmap.CompressFormat.PNG, 100, out); out.toByteArray() }
-                    file != null && file.isFile -> file.readBytes()
-                    else -> null
-                }
-                if (bytes != null && bytes.isNotEmpty()) layerObject.put("bitmap", Base64.encodeToString(bytes, Base64.NO_WRAP))
-                layerArray.put(layerObject)
-            }
-        }
-        root.put("layers", layerArray)
         bitmapFor(frame)
         return root
     }
@@ -4457,7 +4231,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmaps.clear()
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
-        frameBitmapDirectory.listFiles()?.forEach { it.deleteRecursively() }
+        frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
@@ -4547,88 +4321,24 @@ class DrawingView(context: android.content.Context) : View(context) {
                 noteColors[index] = frameObject.optInt("noteColor", Color.DKGRAY)
             }
         }
-        val savedLayers = root.optJSONArray("layers")
-        if (savedLayers == null || savedLayers.length() == 0) {
-            // Migrate legacy single-bitmap-per-frame sessions into one independent
-            // editable layer for each frame without re-encoding their PNG files.
-            val legacyFiles = frameBitmapFiles.toMap()
-            frameBitmapFiles.clear()
-            legacyFiles.forEach { (idx, file) ->
-                val id = "layer_${idx}_base"
-                layerFrameFiles.getOrPut(id) { mutableMapOf() }[idx] = file
-                frameLayerStacks[idx] = mutableListOf(DrawingLayer(id, "Capa 1"))
-                frameActiveLayerIds[idx] = id
-            }
-            if (frameLayerStacks[0] == null) {
-                frameLayerStacks[0] = mutableListOf(DrawingLayer("layer_0_base", "Capa 1"))
-                frameActiveLayerIds[0] = "layer_0_base"
-            }
-            drawingLayers.clear(); drawingLayers.addAll(frameLayerStacks[frame]?.map { it.copy() } ?: mutableListOf(DrawingLayer("layer_0_base", "Capa 1")))
-            activeLayerId = frameActiveLayerIds[frame] ?: drawingLayers.first().id
-            frameBitmapFiles.putAll(layerFrameFiles[activeLayerId] ?: mutableMapOf())
-        }
-        if (savedLayers != null && savedLayers.length() > 0) {
-            frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }; frameBitmaps.clear()
-            frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }; frameBitmapFiles.clear()
-            layerFrameFiles.clear(); frameLayerStacks.clear(); frameActiveLayerIds.clear()
-            layerPreviewCache.values.forEach { if (!it.isRecycled) it.recycle() }; layerPreviewCache.clear()
-            drawingLayers.clear()
-            for (i in 0 until savedLayers.length()) {
-                val obj = savedLayers.optJSONObject(i) ?: continue
-                val frameIndex = obj.optInt("frame", 0)
-                val id = obj.optString("id", "layer_${frameIndex}_$i")
-                val layer = DrawingLayer(id, obj.optString("name", "Capa ${i+1}"), obj.optBoolean("visible", true), obj.optInt("opacity", 100).coerceIn(0,100))
-                frameLayerStacks.getOrPut(frameIndex) { mutableListOf() }.add(layer)
-                if (obj.optBoolean("active", false)) frameActiveLayerIds[frameIndex] = id
-                val data = obj.optString("bitmap", "")
-                if (data.isNotBlank()) {
-                    val bytes = Base64.decode(data, Base64.DEFAULT)
-                    val dir = layerDirectory(id)
-                    val file = File(dir, "frame_${frameIndex}_${UUID.randomUUID()}.png")
-                    FileOutputStream(file).use { it.write(bytes) }
-                    layerFrameFiles.getOrPut(id) { mutableMapOf() }[frameIndex] = file
-                }
-            }
-            frameLayerStacks.forEach { (idx, stack) ->
-                if (frameActiveLayerIds[idx] == null) {
-                    stack.firstOrNull()?.id?.let { layerId -> frameActiveLayerIds[idx] = layerId }
-                }
-            }
-            drawingLayers.clear(); drawingLayers.addAll((frameLayerStacks[frame] ?: mutableListOf(DrawingLayer("layer_${frame}_base", "Capa 1"))).map { it.copy() })
-            activeLayerId = frameActiveLayerIds[frame]?.takeIf { id -> drawingLayers.any { it.id == id } } ?: drawingLayers.first().id
-            frameLayerStacks[frame] = drawingLayers.map { it.copy() }.toMutableList()
-            frameActiveLayerIds[frame] = activeLayerId
-            frameBitmapFiles.putAll(layerFrameFiles[activeLayerId] ?: mutableMapOf())
-        }
-        if (frameLayerStacks[frame] == null) {
-            frameLayerStacks[frame] = drawingLayers.map { it.copy() }.toMutableList()
-            frameActiveLayerIds[frame] = activeLayerId
-        }
         bitmapFor(frame)
-        invalidate(); onLayersChanged?.invoke()
-    }
-
-    private fun drawCompositeFrame(index: Int, canvas: Canvas) {
-        val stack = if (index == frame) drawingLayers else frameLayerStacks[index] ?: emptyList()
-        val activeId = if (index == frame) activeLayerId else frameActiveLayerIds[index]
-        stack.asReversed().forEach { layer ->
-            if (!layer.visible) return@forEach
-            val isActiveSurface = index == frame && layer.id == activeId
-            val bitmap = if (isActiveSurface) bitmapFor(index) else {
-                val file = layerFrameFiles[layer.id]?.get(index)
-                if (file != null && file.isFile) BitmapFactory.decodeFile(file.absolutePath) else null
-            }
-            if (bitmap != null && !bitmap.isRecycled) {
-                canvas.drawBitmap(bitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = layer.opacity * 255 / 100 })
-                if (!isActiveSurface) bitmap.recycle()
-            }
-        }
+        invalidate()
     }
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
-        drawCompositeFrame(index, canvas)
-        drawNote(canvas, index)
+        val frameBitmap = bitmapFor(index)
+        canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (index != frame) {
+            spillFrameBitmap(index)
+            bitmapFor(frame)
+        }
+        notes[index]?.firstOrNull()?.let {
+            textPaint.textSize = 34f
+            textPaint.color = Color.RED
+            canvas.drawText(it, 24f, 1030f, textPaint)
+            textPaint.color = Color.DKGRAY
+        }
     }
 
     fun exportCurrent(output: OutputStream) {
@@ -4651,8 +4361,18 @@ class DrawingView(context: android.content.Context) : View(context) {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         bakeLegacyFrame(index)
-        drawCompositeFrame(index, canvas)
-        drawNote(canvas, index)
+        val frameBitmap = bitmapFor(index)
+        canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (index != frame) {
+            spillFrameBitmap(index)
+            bitmapFor(frame)
+        }
+        notes[index]?.firstOrNull()?.let {
+            textPaint.textSize = 34f
+            textPaint.color = Color.RED
+            canvas.drawText(it, 24f, 1030f, textPaint)
+            textPaint.color = Color.DKGRAY
+        }
         return bitmap
     }
 }
