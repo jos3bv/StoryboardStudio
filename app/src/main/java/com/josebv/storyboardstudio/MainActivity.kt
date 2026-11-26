@@ -79,6 +79,12 @@ class MainActivity : Activity() {
     private var selectedColorIndicator: View? = null
     private var selectionActionsView: View? = null
     private var brushSizeSlider: VerticalSliderView? = null
+    private var fullscreenMode = false
+    private var fullscreenHeader: View? = null
+    private var fullscreenSidebar: View? = null
+    private var fullscreenTimeline: View? = null
+    private var fullscreenSliderRail: View? = null
+    private var showPanelsButton: Button? = null
 
     private val frameDurations = mutableListOf(3000)
     private var currentFrame = 0
@@ -196,7 +202,7 @@ class MainActivity : Activity() {
                 scheduleAutosave()
             }
             onHistoryAction = {
-                if (!restoringHistory) recordHistory()
+                if (!restoringHistory) scheduleHistoryRecord()
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
         }
@@ -223,7 +229,7 @@ class MainActivity : Activity() {
         // Acciones de Archivo visibles permanentemente en el encabezado.
         fun headerAction(label: String, widthDp: Int, action: () -> Unit) {
             val button = addHeaderButton(top, label, dp(widthDp), action)
-            button.textSize = 9f
+            button.textSize = 14f
             button.setPadding(dp(1), 0, dp(1), 0)
             button.maxLines = 1
         }
@@ -242,7 +248,7 @@ class MainActivity : Activity() {
         headerAction("Guardar copia", 80, ::saveLocalSnapshot)
         headerDivider()
         val saveHeaderButton = addHeaderButton(top, "Guardar", dp(60)) { saveProject() }
-        saveHeaderButton.textSize = 10f
+        saveHeaderButton.textSize = 14f
         headerDivider()
         projectTitleLabel = TextView(this).apply {
             text = projectName
@@ -277,6 +283,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, dp(14), 0)
         }
         top.addView(brand, LinearLayout.LayoutParams(0, -1, 0.72f))
+        fullscreenHeader = top
         root.addView(top, LinearLayout.LayoutParams(-1, dp(40)))
         // Work area: left tool panel and a large central canvas.
         val work = LinearLayout(this).apply {
@@ -567,6 +574,7 @@ class MainActivity : Activity() {
         }
         val divider = View(this).apply { setBackgroundColor(Color.rgb(105, 105, 105)) }
         sidebar.addView(divider, LinearLayout.LayoutParams(dp(1), -1))
+        fullscreenSidebar = sidebar
         work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
         val canvasArea = FrameLayout(this).apply {
@@ -602,7 +610,11 @@ class MainActivity : Activity() {
             selectionActionsView?.visibility = View.GONE
         }
         selectionActionsView = selectionActions
-        canvasArea.addView(selectionActions, FrameLayout.LayoutParams(-2, dp(42), Gravity.TOP or Gravity.RIGHT).apply {
+        acceptSelection.layoutParams = acceptSelection.layoutParams.apply { width = dp(112); height = dp(48) }
+        cancelSelection.layoutParams = cancelSelection.layoutParams.apply { width = dp(112); height = dp(48) }
+        acceptSelection.textSize = 14f
+        cancelSelection.textSize = 14f
+        canvasArea.addView(selectionActions, FrameLayout.LayoutParams(-2, dp(50), Gravity.TOP or Gravity.RIGHT).apply {
             rightMargin = dp(12)
             topMargin = dp(12)
         })
@@ -616,6 +628,7 @@ class MainActivity : Activity() {
         }
         sliderRail.addView(sizeSlider, LinearLayout.LayoutParams(dp(32), 0, 1f))
         sliderRail.addView(opacitySlider, LinearLayout.LayoutParams(dp(32), 0, 1f))
+        fullscreenSliderRail = sliderRail
         canvasArea.addView(
             sliderRail,
             FrameLayout.LayoutParams(dp(32), -1, Gravity.LEFT or Gravity.TOP).apply {
@@ -638,6 +651,13 @@ class MainActivity : Activity() {
         }
         canvasArea.addView(centerButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
             leftMargin = dp(12)
+            bottomMargin = dp(12)
+        })
+        showPanelsButton = CanvasFullscreenControls.createToggleButton(this) {
+            setFullscreenMode(!fullscreenMode)
+        }
+        canvasArea.addView(showPanelsButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.LEFT).apply {
+            leftMargin = dp(60)
             bottomMargin = dp(12)
         })
         work.addView(canvasArea, LinearLayout.LayoutParams(0, -1, 0.83f))
@@ -818,12 +838,24 @@ class MainActivity : Activity() {
             bottomMargin = dp(3)
         })
         timelinePanel.addView(timelineContent, LinearLayout.LayoutParams(-1, 0, 1f))
+        fullscreenTimeline = timelinePanel
         root.addView(timelinePanel, LinearLayout.LayoutParams(-1, dp(160)))
 
         applySystemTypeface(root)
         setContentView(root)
         updateFrameStatus()
         updateTimeline()
+    }
+
+    private fun setFullscreenMode(enabled: Boolean) {
+        fullscreenMode = enabled
+        fullscreenHeader?.visibility = if (enabled) View.GONE else View.VISIBLE
+        fullscreenSidebar?.visibility = if (enabled) View.GONE else View.VISIBLE
+        fullscreenTimeline?.visibility = if (enabled) View.GONE else View.VISIBLE
+        fullscreenSliderRail?.visibility = if (enabled) View.GONE else View.VISIBLE
+        showPanelsButton?.visibility = View.VISIBLE
+        showPanelsButton?.contentDescription = if (enabled) "Mostrar paneles" else "Pantalla completa"
+        showPanelsButton?.let { CanvasFullscreenControls.updateToggleIcon(this, it, enabled) }
     }
 
     private fun setButtonIcon(button: Button, drawableName: String, sizeDp: Int = 30, transparent: Boolean = true) {
@@ -900,7 +932,7 @@ class MainActivity : Activity() {
 
     private fun addHeaderButton(parent: LinearLayout, label: String, width: Int, action: () -> Unit): Button {
         val button = Button(this).apply {
-            text = label; isAllCaps = false; textSize = 12f
+            text = label; isAllCaps = false; textSize = 14f
             setTextColor(Color.WHITE)
             background = android.graphics.drawable.ColorDrawable(Color.rgb(83, 83, 83))
             setPadding(0, 0, 0, 0)
@@ -944,7 +976,7 @@ class MainActivity : Activity() {
     private fun addCompactButton(parent: LinearLayout, label: String, description: String, action: () -> Unit): Button {
         val button = Button(this).apply {
             text = label; contentDescription = description
-            textSize = if (label.length > 3) 9f else 16f
+            textSize = 14f
             isAllCaps = false; minWidth = dp(30); minimumWidth = dp(30)
             setPadding(dp(2), dp(3), dp(2), 0)
             gravity = Gravity.CENTER
@@ -1142,6 +1174,8 @@ class MainActivity : Activity() {
     }
 
     private fun resetHistory() {
+        handler.removeCallbacks(pendingHistoryRunnable)
+        historyRecordPending = false
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
         lastHistoryStateFile?.delete()
@@ -1162,7 +1196,26 @@ class MainActivity : Activity() {
         lastHistoryStateFile = storeHistoryState(state)
     }
 
-    private fun flushPendingHistory(): Boolean = false
+    private var historyRecordPending = false
+    private val pendingHistoryRunnable = Runnable { historyRecordPending = false; recordHistory() }
+
+    // Coalesce rapid consecutive ink strokes so each pen lift does not synchronously
+    // PNG-compress the entire 1920x1080 frame on the UI thread.
+    private fun scheduleHistoryRecord() {
+        handler.removeCallbacks(pendingHistoryRunnable)
+        historyRecordPending = true
+        handler.postDelayed(pendingHistoryRunnable, 350L)
+    }
+
+    private fun flushPendingHistory(): Boolean {
+        val pending = historyRecordPending
+        if (pending) {
+            handler.removeCallbacks(pendingHistoryRunnable)
+            historyRecordPending = false
+            recordHistory()
+        }
+        return pending
+    }
 
     private fun restoreHistoryState(state: String) {
         restoringHistory = true
@@ -3049,7 +3102,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     // only composites this bitmap instead of rebuilding the entire stroke every frame.
     private var inProgressBitmap: Bitmap? = null
     private var inProgressCanvas: Canvas? = null
-    private val inProgressPath = Path()
     private val inProgressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -3068,7 +3120,6 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
     private var inProgressBounds: RectF? = null
     private var inProgressLastPoint: PointF? = null
-    private var inProgressLastMidpoint: PointF? = null
     private var inProgressLastWidth = 0f
     private var inProgressErase = false
     private var inProgressColor = Color.BLACK
@@ -3146,7 +3197,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressCanvas = null
         inProgressBounds = null
         inProgressLastPoint = null
-        inProgressLastMidpoint = null
     }
 
     private fun ensureInProgressSurface() {
@@ -3163,7 +3213,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressAlpha = Color.alpha(stroke.color)
         inProgressPaint.color = if (stroke.erase) Color.WHITE else inProgressColor
         inProgressLastPoint = PointF(point.x, point.y)
-        inProgressLastMidpoint = null
         // Widths are already expressed in 1920x1080 drawing coordinates. Do not
         // multiply them again: preview and committed pixels must have identical size.
         inProgressLastWidth = width.coerceAtLeast(0.5f)
@@ -3186,39 +3235,16 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         val distance = kotlin.math.hypot((point.x - previous.x).toDouble(), (point.y - previous.y).toDouble()).toFloat()
         if (distance < 0.65f) return
-        val midpoint = PointF((previous.x + point.x) * 0.5f, (previous.y + point.y) * 0.5f)
         val nextWidth = width.coerceAtLeast(0.5f)
         inProgressPaint.strokeWidth = ((inProgressLastWidth + nextWidth) * 0.5f).coerceAtLeast(1f)
         inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
-        inProgressPath.reset()
-        val start = inProgressLastMidpoint ?: previous
-        inProgressPath.moveTo(start.x, start.y)
-        inProgressPath.quadTo(previous.x, previous.y, midpoint.x, midpoint.y)
-        inProgressCanvas?.drawPath(inProgressPath, inProgressPaint)
+        inProgressPaint.strokeCap = Paint.Cap.BUTT
+        inProgressPaint.strokeJoin = Paint.Join.BEVEL
+        inProgressCanvas?.drawLine(previous.x, previous.y, point.x, point.y, inProgressPaint)
         inProgressLastPoint = PointF(point.x, point.y)
-        inProgressLastMidpoint = midpoint
         inProgressLastWidth = nextWidth
         expandInProgressBounds(previous, inProgressPaint.strokeWidth)
         expandInProgressBounds(point, nextWidth)
-    }
-
-    private fun finishInProgressPreview() {
-        val last = inProgressLastPoint ?: return
-        val midpoint = inProgressLastMidpoint
-        if (midpoint != null) {
-            inProgressPath.reset()
-            inProgressPath.moveTo(midpoint.x, midpoint.y)
-            inProgressPath.lineTo(last.x, last.y)
-            inProgressPaint.strokeWidth = inProgressLastWidth
-            inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
-            // Close the final segment with a flat cap: do not add a rounded tip
-            // after the user lifts the pen. The live stroke remains unchanged.
-            val previousCap = inProgressPaint.strokeCap
-            inProgressPaint.strokeCap = Paint.Cap.BUTT
-            inProgressCanvas?.drawPath(inProgressPath, inProgressPaint)
-            inProgressPaint.strokeCap = previousCap
-            expandInProgressBounds(last, inProgressLastWidth)
-        }
     }
 
     private fun clearInProgressDirtyRegion() {
@@ -3228,7 +3254,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         inProgressBounds = null
         inProgressLastPoint = null
-        inProgressLastMidpoint = null
     }
 
     /**
@@ -3324,7 +3349,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         current = null
         inProgressBounds = null
         inProgressLastPoint = null
-        inProgressLastMidpoint = null
         inProgressCanvas?.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         cancelSelection()
         invalidate()
@@ -4155,7 +4179,6 @@ class DrawingView(context: android.content.Context) : View(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val completed = current
                 if (completed != null) {
-                    finishInProgressPreview()
                     val targetBitmap = bitmapFor(frame)
                     // Commit the exact bitmap used for the live preview.
                     // Re-rasterizing the point list here caused a visible shape/width jump
