@@ -1,4 +1,4 @@
-name: Build Storyboard Studio APK
+name: Build BV Storyboarder APK
 
 on:
   workflow_dispatch:
@@ -12,9 +12,10 @@ permissions:
 
 jobs:
   build:
+    name: Compile BV Storyboarder
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -23,47 +24,35 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Install SDK packages directly, avoiding legacy SDK components.
-      - name: Install required Android SDK packages
+      - name: Install Android SDK components
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          if [ ! -d "$SDK_ROOT/cmdline-tools" ]; then
-            echo "Android command-line tools not found under: $SDK_ROOT"
-            exit 1
-          fi
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager executable not found under: $SDK_ROOT/cmdline-tools"
+            echo "ERROR: sdkmanager was not found in the preinstalled Android SDK."
             exit 1
           fi
-          echo "Using SDK: $SDK_ROOT"
-          echo "Using sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Verify build environment
+      - name: Verify Android build environment
         shell: bash
         run: |
           set -euo pipefail
+          test -d "${ANDROID_HOME}/platforms/android-35"
+          test -d "${ANDROID_HOME}/build-tools/35.0.0"
           java -version
           gradle --version
-          test -d "$ANDROID_HOME/platforms/android-35"
-          test -d "$ANDROID_HOME/build-tools/35.0.0"
-          test -d "$ANDROID_HOME/platform-tools"
-          echo "Android SDK components verified."
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
@@ -71,7 +60,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: StoryboardStudio-1.0.1-debug
+          name: BV-Storyboarder-0.9.50-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30

@@ -4,18 +4,23 @@ plugins {
 }
 
 android {
-    namespace = "com.bv.storyboardstudio"
+    namespace = "com.josebv.storyboardstudio"
     compileSdk = 35
+
     defaultConfig {
-        applicationId = "com.bv.storyboardstudio"
+        applicationId = "com.josebv.storyboardstudio"
         minSdk = 23
-        targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.1"
+        targetSdk = 28
+        versionCode = 61
+        versionName = "0.9.50"
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
 }
