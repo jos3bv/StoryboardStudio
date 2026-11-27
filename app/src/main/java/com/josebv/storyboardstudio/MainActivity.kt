@@ -3819,9 +3819,11 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val noteColors = mutableMapOf<Int, Int>()
     private var frame = 0
     private var current: Stroke? = null
-    private var color = Color.BLACK
-    private var brush = 4f
-    private var eraserBrush = 20f
+    private data class BrushSettings(var size: Float, var color: Int, var opacity: Int)
+    private val pencilSettings = BrushSettings(4f, Color.BLACK, 255)
+    private val eraserSettings = BrushSettings(20f, Color.BLACK, 255)
+    private val backgroundPencilSettings = BrushSettings(4f, Color.BLACK, 255)
+    private val backgroundEraserSettings = BrushSettings(20f, Color.BLACK, 255)
     private val importedImages = mutableMapOf<Int, Bitmap>()
     // Reusable wet-ink surface. Samples are rasterized once as they arrive; onDraw
     // only composites this bitmap instead of rebuilding the entire stroke every frame.
@@ -3855,10 +3857,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private var hue = 0f
-    private var saturation = 1f
-    private var value = 0f
-    private var brushOpacity = 255
     private var pressureSensitivity = true
     private var eraser = false
     private var backgroundPencil = false
@@ -3943,7 +3941,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressErase = stroke.erase
         inProgressColor = Color.rgb(Color.red(stroke.color), Color.green(stroke.color), Color.blue(stroke.color))
         inProgressAlpha = Color.alpha(stroke.color)
-        inProgressPaint.color = if (stroke.erase) Color.WHITE else inProgressColor
+        inProgressPaint.color = if (stroke.erase) Color.argb(inProgressAlpha, 255, 255, 255) else inProgressColor
         inProgressLastPoint = PointF(point.x, point.y)
         // Widths are already expressed in 1920x1080 drawing coordinates. Do not
         // multiply them again: preview and committed pixels must have identical size.
@@ -3969,7 +3967,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (distance < 0.65f) return
         val nextWidth = width.coerceAtLeast(0.5f)
         inProgressPaint.strokeWidth = ((inProgressLastWidth + nextWidth) * 0.5f).coerceAtLeast(1f)
-        inProgressPaint.color = if (inProgressErase) Color.WHITE else inProgressColor
+        inProgressPaint.color = if (inProgressErase) Color.argb(inProgressAlpha, 255, 255, 255) else inProgressColor
         // Round joins/caps overlap adjacent samples, preventing visible gaps while
         // keeping the live bitmap as the exact committed result (no end-of-stroke redraw).
         inProgressPaint.strokeCap = Paint.Cap.ROUND
@@ -4098,36 +4096,73 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidate()
         onChanged?.invoke()
     }
+    private fun activeSettings(): BrushSettings = when {
+        backgroundPencil -> backgroundPencilSettings
+        backgroundEraser -> backgroundEraserSettings
+        eraser -> eraserSettings
+        else -> pencilSettings
+    }
+
     fun setEraser(value: Boolean) {
         eraser = value
         backgroundPencil = false
         backgroundEraser = false
-    }
-    fun setBackgroundPencil(value: Boolean) {
-        backgroundPencil = value
-        if (value) {
-            eraser = false
-            backgroundEraser = false
-        }
         invalidate()
     }
-    fun setBackgroundEraser(value: Boolean) {
-        backgroundEraser = value
+    fun setBackgroundPencil(value: Boolean) {
         if (value) {
+            backgroundPencil = true
+            backgroundEraser = false
             eraser = false
+        } else {
             backgroundPencil = false
         }
         invalidate()
     }
+    fun setBackgroundEraser(value: Boolean) {
+        if (value) {
+            backgroundEraser = true
+            backgroundPencil = false
+            eraser = false
+        } else {
+            backgroundEraser = false
+            backgroundPencil = true
+            eraser = false
+        }
+        invalidate()
+    }
+    fun togglePencilEraser() {
+        if (backgroundPencil || backgroundEraser) setBackgroundEraser(!backgroundEraser)
+        else setEraser(!eraser)
+    }
+    fun activeToolId(): Int = when {
+        backgroundPencil -> 2
+        backgroundEraser -> 3
+        eraser -> 1
+        else -> 0
+    }
+    fun setActiveTool(id: Int) {
+        when (id) {
+            1 -> setEraser(true)
+            2 -> setBackgroundPencil(true)
+            3 -> setBackgroundEraser(true)
+            else -> setEraser(false)
+        }
+    }
     fun isBackgroundPencil(): Boolean = backgroundPencil
     fun isBackgroundEraser(): Boolean = backgroundEraser
     fun isEraser(): Boolean = eraser
-    fun activeBrushSize(): Float = if (eraser || backgroundEraser) eraserBrush else brush
-    fun pencilToolSize(): Float = brush
-    fun eraserToolSize(): Float = eraserBrush
-    fun setActiveBrushSize(size: Float) { if (eraser || backgroundEraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
-    fun setColor(value: Int) { color = value; eraser = false; backgroundPencil = false; backgroundEraser = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
-    fun currentColor(): Int = Color.HSVToColor(floatArrayOf(hue,saturation,value))
+    fun activeBrushSize(): Float = activeSettings().size
+    fun pencilToolSize(): Float = pencilSettings.size
+    fun eraserToolSize(): Float = eraserSettings.size
+    fun setActiveBrushSize(size: Float) {
+        activeSettings().size = size.coerceIn(1f, 200f)
+    }
+    fun setColor(value: Int) {
+        activeSettings().color = value
+        invalidate()
+    }
+    fun currentColor(): Int = activeSettings().color
     fun canvasPaperColor(): Int = paperColor
     fun setCanvasPaperColor(value: Int) {
         if (paperColor == value) return
@@ -4136,10 +4171,27 @@ class DrawingView(context: android.content.Context) : View(context) {
         onChanged?.invoke()
         onHistoryAction?.invoke()
     }
-    fun currentHue() = hue
-    fun currentSaturation() = saturation*100f
-    fun currentValue() = value*100f
-    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; backgroundPencil=false; backgroundEraser=false; invalidate() }
+    fun currentHue(): Float {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(currentColor(), hsv)
+        return hsv[0]
+    }
+    fun currentSaturation(): Float {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(currentColor(), hsv)
+        return hsv[1] * 100f
+    }
+    fun currentValue(): Float {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(currentColor(), hsv)
+        return hsv[2] * 100f
+    }
+    fun setColorFromHsv(h: Float, s: Float, v: Float) {
+        activeSettings().color = Color.HSVToColor(floatArrayOf(
+            h.coerceIn(0f, 359f), s.coerceIn(0f, 1f), v.coerceIn(0f, 1f)
+        ))
+        invalidate()
+    }
     fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
     fun brushSize(): Float = activeBrushSize()
     fun addImportedImage(bitmap: Bitmap) {
@@ -4169,14 +4221,43 @@ class DrawingView(context: android.content.Context) : View(context) {
         onChanged?.invoke()
         onHistoryAction?.invoke()
     }
-    fun brushOpacity(): Int = (brushOpacity * 100f / 255f).roundToInt().coerceIn(0, 100)
+    fun brushOpacity(): Int = (activeSettings().opacity * 100f / 255f).roundToInt().coerceIn(0, 100)
     fun pressureEnabled(): Boolean = pressureSensitivity
     fun configureBrush(size: Float, opacity: Int, pressure: Boolean) {
         setActiveBrushSize(size)
-        // Opacity is strictly the alpha channel (0..255); it never changes
-        // stylus sampling density, point spacing, or pressure interpolation.
-        brushOpacity = opacity.coerceIn(0, 255)
+        // Opacity belongs to the selected tool, independently from the other three.
+        activeSettings().opacity = opacity.coerceIn(0, 255)
         pressureSensitivity = pressure
+    }
+
+    private fun writeToolSetting(key: String, settings: BrushSettings, target: JSONObject) {
+        target.put(key, JSONObject().apply {
+            put("size", settings.size.toDouble())
+            put("color", settings.color)
+            put("opacity", settings.opacity)
+        })
+    }
+
+    fun toolSettingsSnapshot(): JSONObject = JSONObject().apply {
+        writeToolSetting("pencil", pencilSettings, this)
+        writeToolSetting("eraser", eraserSettings, this)
+        writeToolSetting("backgroundPencil", backgroundPencilSettings, this)
+        writeToolSetting("backgroundEraser", backgroundEraserSettings, this)
+        put("pressureSensitivity", pressureSensitivity)
+    }
+
+    fun restoreToolSettings(snapshot: JSONObject) {
+        fun readSetting(key: String, settings: BrushSettings) {
+            val saved = snapshot.optJSONObject(key) ?: return
+            settings.size = saved.optDouble("size", settings.size.toDouble()).toFloat().coerceIn(1f, 200f)
+            settings.color = saved.optInt("color", settings.color)
+            settings.opacity = saved.optInt("opacity", settings.opacity).coerceIn(0, 255)
+        }
+        readSetting("pencil", pencilSettings)
+        readSetting("eraser", eraserSettings)
+        readSetting("backgroundPencil", backgroundPencilSettings)
+        readSetting("backgroundEraser", backgroundEraserSettings)
+        pressureSensitivity = snapshot.optBoolean("pressureSensitivity", pressureSensitivity)
     }
 
     fun clear() {
@@ -4954,15 +5035,16 @@ class DrawingView(context: android.content.Context) : View(context) {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 val eraseStroke = eraser || backgroundEraser || tool == MotionEvent.TOOL_TYPE_ERASER
                 inProgressBackground = backgroundPencil || backgroundEraser
-                if (!eraseStroke) onColorUsed?.invoke(color)
+                val activeSettings = activeSettings()
+                if (!eraseStroke) onColorUsed?.invoke(activeSettings.color)
                 val strokeColor = Color.argb(
-                    brushOpacity,
-                    Color.red(color),
-                    Color.green(color),
-                    Color.blue(color)
+                    activeSettings.opacity,
+                    Color.red(activeSettings.color),
+                    Color.green(activeSettings.color),
+                    Color.blue(activeSettings.color)
                 )
                 val initialPressure = event.pressure.coerceIn(0.05f, 1f)
-                val initialWidth = if (pressureSensitivity) activeBrushSize() * (0.18f + initialPressure * initialPressure * 1.12f) else activeBrushSize()
+                val initialWidth = if (pressureSensitivity) activeSettings.size * (0.18f + initialPressure * initialPressure * 1.12f) else activeSettings.size
                 val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
                 current = stroke
                 beginInProgressStroke(point, initialWidth, stroke)
@@ -5033,12 +5115,15 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun toJson(includeBitmapData: Boolean = true): JSONObject {
         val root = JSONObject()
-        root.put("brushSize", brush.toDouble())
-        root.put("eraserSize", eraserBrush.toDouble())
-        root.put("hue", hue.toDouble()); root.put("saturation", saturation.toDouble()); root.put("value", value.toDouble())
-        root.put("brushColor", color)
-        root.put("brushOpacity", brushOpacity)
+        root.put("brushSize", pencilSettings.size.toDouble())
+        root.put("eraserSize", eraserSettings.size.toDouble())
+        val legacyHsv = FloatArray(3)
+        Color.colorToHSV(pencilSettings.color, legacyHsv)
+        root.put("hue", legacyHsv[0].toDouble()); root.put("saturation", legacyHsv[1].toDouble()); root.put("value", legacyHsv[2].toDouble())
+        root.put("brushColor", pencilSettings.color)
+        root.put("brushOpacity", pencilSettings.opacity)
         root.put("pressureSensitivity", pressureSensitivity)
+        root.put("toolSettings", toolSettingsSnapshot())
         root.put("paperColor", paperColor)
         val frameArray = JSONArray()
         val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
@@ -5171,16 +5256,21 @@ class DrawingView(context: android.content.Context) : View(context) {
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
         importedImages.clear()
-        brush = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
-        eraserBrush = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f,200f)
-        color = root.optInt("brushColor", Color.BLACK)
-        if (root.has("hue") && root.has("saturation") && root.has("value")) {
-            hue=root.optDouble("hue",0.0).toFloat(); saturation=root.optDouble("saturation",1.0).toFloat(); value=root.optDouble("value",0.0).toFloat()
-        } else {
-            val hsv=FloatArray(3); Color.colorToHSV(color,hsv); hue=hsv[0]; saturation=hsv[1]; value=hsv[2]
-        }
-        brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
+        pencilSettings.size = root.optDouble("brushSize", 4.0).toFloat().coerceIn(1f, 200f)
+        eraserSettings.size = root.optDouble("eraserSize", 20.0).toFloat().coerceIn(1f, 200f)
+        pencilSettings.color = root.optInt("brushColor", Color.BLACK)
+        pencilSettings.opacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
+        // Versions before 0.9.77 shared pencil/eraser settings with the background tools.
+        eraserSettings.color = pencilSettings.color
+        eraserSettings.opacity = pencilSettings.opacity
+        backgroundPencilSettings.size = pencilSettings.size
+        backgroundPencilSettings.color = pencilSettings.color
+        backgroundPencilSettings.opacity = pencilSettings.opacity
+        backgroundEraserSettings.size = eraserSettings.size
+        backgroundEraserSettings.color = pencilSettings.color
+        backgroundEraserSettings.opacity = pencilSettings.opacity
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
+        root.optJSONObject("toolSettings")?.let { restoreToolSettings(it) }
         paperColor = root.optInt("paperColor", Color.WHITE)
         val array = root.optJSONArray("frames") ?: JSONArray()
         for (i in 0 until array.length()) {
