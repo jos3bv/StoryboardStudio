@@ -95,6 +95,7 @@ class MainActivity : Activity() {
     private var selectedColorIndicator: View? = null
     private var selectionActionsView: View? = null
     private var brushSizeSlider: VerticalSliderView? = null
+    private var brushOpacitySlider: VerticalSliderView? = null
     private var fullscreenMode = false
     private var fullscreenHeader: View? = null
     private var fullscreenSidebar: View? = null
@@ -365,9 +366,8 @@ class MainActivity : Activity() {
 
         // Handle the press itself, including generic-motion delivery from Samsung S Pen.
         if (pressEdge && !stylusSideButtonDown && ::drawing.isInitialized) {
-            drawing.setEraser(!drawing.isEraser())
-            updateActiveToolButton()
-            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            drawing.togglePencilEraser()
+            refreshActiveToolControls()
             scheduleAutosave()
         }
 
@@ -537,7 +537,6 @@ class MainActivity : Activity() {
             this, drawing.currentHue(), drawing.currentSaturation() / 100f, drawing.currentValue() / 100f
         ) { h, sat, v ->
             drawing.setColorFromHsv(h, sat, v)
-            updateActiveToolButton(false)
             updateSelectedColorIndicator()
             scheduleAutosave()
         }
@@ -550,11 +549,11 @@ class MainActivity : Activity() {
             }
             contentDescription = "Color seleccionado"
         }
-        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(20)).apply {
+        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(14)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            setMargins(0, dp(2), 0, dp(3))
+            setMargins(0, dp(1), 0, dp(2))
         })
-        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.8f).apply {
+        sideContent.addView(picker, LinearLayout.LayoutParams(-1, 0, 2.0f).apply {
             // Keep the chromatic controls flush with the color preview and swatches.
             setMargins(0, 0, 0, 0)
         })
@@ -592,8 +591,8 @@ class MainActivity : Activity() {
                 cornerRadius = dp(3).toFloat()
             }
         }
-        paperColorRow.addView(paperColorIndicator, LinearLayout.LayoutParams(dp(26), dp(14)))
-        swatchWrap.addView(paperColorRow, LinearLayout.LayoutParams(-1, dp(18)))
+        paperColorRow.addView(paperColorIndicator, LinearLayout.LayoutParams(dp(30), dp(28)))
+        swatchWrap.addView(paperColorRow, LinearLayout.LayoutParams(-1, dp(36)))
         swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(16)))
         val grayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -606,7 +605,6 @@ class MainActivity : Activity() {
                 setBackgroundColor(color)
                 setOnClickListener {
                     drawing.setColor(color)
-                    updateActiveToolButton(false)
                     picker.setColor(color)
                     updateSelectedColorIndicator()
                     scheduleAutosave()
@@ -617,10 +615,11 @@ class MainActivity : Activity() {
             })
         }
         swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(16)))
-        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)).apply {
-            // Small gap to the HSV selector; more breathing room before tool buttons.
-            setMargins(0, 0, 0, dp(8))
+        sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(70)).apply {
+            // Taller paper-color control; recent colors and grayscale swatches remain compact.
+            setMargins(0, 0, 0, dp(4))
         })
+        sideContent.addView(View(this), LinearLayout.LayoutParams(-1, 0, 0.5f))
         refreshRecentColorSwatches()
         updatePaperColorIndicator()
 
@@ -660,7 +659,7 @@ class MainActivity : Activity() {
                     if (description != "Selección tipo lazo") updateModeToolAlpha(lassoActive = false)
                     if (description == "Lápiz" || description == "Goma" ||
                         description == "Lápiz de fondo" || description == "Goma de fondo") {
-                        updateActiveToolButton(description == "Goma")
+                        updateActiveToolButton()
                     }
                 }
                 setButtonIcon(this, iconName, 40)
@@ -700,12 +699,12 @@ class MainActivity : Activity() {
 
         pencilToolButton = tool("ic_pencil", "Lápiz") {
             drawing.setEraser(false)
-            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            refreshActiveToolControls()
         }
         addToolCell(toolRow1, pencilToolButton!!)
         eraserToolButton = tool("ic_eraser", "Goma") {
             drawing.setEraser(true)
-            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            refreshActiveToolControls()
         }
         addToolCell(toolRow1, eraserToolButton!!)
         addToolCell(toolRow1, tool("ic_text", "Texto") { addTextNote() })
@@ -730,15 +729,13 @@ class MainActivity : Activity() {
         addToolCell(toolRow2, lassoToolButton!!)
         backgroundPencilToolButton = tool("ic_pencil", "Lápiz de fondo") {
             drawing.setBackgroundPencil(true)
-            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
-            updateActiveToolButton(false)
+            refreshActiveToolControls()
             setStatus("Lápiz de fondo activo")
         }
         addToolCell(toolRow3, backgroundPencilToolButton!!)
         backgroundEraserToolButton = tool("ic_eraser", "Goma de fondo") {
             drawing.setBackgroundEraser(true)
-            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
-            updateActiveToolButton(false)
+            refreshActiveToolControls()
             setStatus("Goma de fondo activa")
         }
         addToolCell(toolRow3, backgroundEraserToolButton!!)
@@ -746,7 +743,7 @@ class MainActivity : Activity() {
             button.tag = false
             button.compoundDrawables.getOrNull(1)?.alpha = 128
         }
-        updateActiveToolButton(false)
+        updateActiveToolButton()
         updateModeToolAlpha()
 
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
@@ -858,6 +855,8 @@ class MainActivity : Activity() {
             drawing.configureBrush(drawing.activeBrushSize(), value * 255 / 100, drawing.pressureEnabled())
             scheduleAutosave()
         }
+        brushOpacitySlider = opacitySlider
+        refreshActiveToolControls()
         fullscreenSidebar = sidebar
         work.addView(sidebar, LinearLayout.LayoutParams(0, -1, 0.12f))
 
@@ -1312,11 +1311,11 @@ class MainActivity : Activity() {
         refreshRecentColorSwatches()
     }
 
-    private fun updateActiveToolButton(eraserActive: Boolean = drawing.isEraser()) {
+    private fun updateActiveToolButton() {
         activeToolButton = when {
             drawing.isBackgroundPencil() -> backgroundPencilToolButton
             drawing.isBackgroundEraser() -> backgroundEraserToolButton
-            eraserActive -> eraserToolButton
+            drawing.isEraser() -> eraserToolButton
             else -> pencilToolButton
         }
         listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton, backgroundEraserToolButton).forEach { button ->
@@ -1325,6 +1324,14 @@ class MainActivity : Activity() {
             button.tag = selected
             button.compoundDrawables.getOrNull(1)?.alpha = if (selected) 255 else 128
         }
+    }
+
+    private fun refreshActiveToolControls() {
+        updateActiveToolButton()
+        inlineColorPicker?.setColor(drawing.currentColor())
+        updateSelectedColorIndicator()
+        brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+        brushOpacitySlider?.setValue(drawing.brushOpacity())
     }
 
     private fun updateModeToolAlpha(lassoActive: Boolean = false) {
@@ -1420,7 +1427,6 @@ class MainActivity : Activity() {
                 setBackgroundColor(color)
                 setOnClickListener {
                     drawing.setColor(color)
-                    updateActiveToolButton(false)
                     inlineColorPicker?.setColor(color)
                     updateSelectedColorIndicator()
                     scheduleAutosave()
@@ -1607,14 +1613,8 @@ class MainActivity : Activity() {
         val (snapshot, extracted) = extractArchive(file)
         restoringHistory = true
         try {
-            val preservedColor = drawing.currentColor()
-            val preservedPencilSize = drawing.pencilToolSize()
-            val preservedEraserSize = drawing.eraserToolSize()
-            val preservedEraser = drawing.isEraser()
-            val preservedBackgroundPencil = drawing.isBackgroundPencil()
-            val preservedBackgroundEraser = drawing.isBackgroundEraser()
-            val preservedOpacity = drawing.brushOpacity()
-            val preservedPressure = drawing.pressureEnabled()
+            val preservedToolSettings = drawing.toolSettingsSnapshot()
+            val preservedActiveTool = drawing.activeToolId()
             val durations = snapshot.optJSONArray("durations")
             frameDurations.clear()
             if (durations != null && durations.length() > 0) {
@@ -1623,18 +1623,12 @@ class MainActivity : Activity() {
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject(), File(extracted, "frames"), currentFrame)
             adoptSessionAssets(File(extracted, "frames"))
-            drawing.setEraser(false); drawing.setActiveBrushSize(preservedPencilSize)
-            drawing.setEraser(true); drawing.setActiveBrushSize(preservedEraserSize)
-            drawing.setEraser(preservedEraser); drawing.setColor(preservedColor); drawing.setEraser(preservedEraser)
-            if (preservedBackgroundPencil) drawing.setBackgroundPencil(true)
-            if (preservedBackgroundEraser) drawing.setBackgroundEraser(true)
-            updateActiveToolButton(preservedEraser)
-            drawing.configureBrush(if (preservedEraser || preservedBackgroundEraser) preservedEraserSize else preservedPencilSize,
-                preservedOpacity * 255 / 100, preservedPressure)
+            drawing.restoreToolSettings(preservedToolSettings)
+            drawing.setActiveTool(preservedActiveTool)
+            refreshActiveToolControls()
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
-            inlineColorPicker?.setColor(preservedColor)
-            updateSelectedColorIndicator(); updatePaperColorIndicator(); updateFrameStatus(); updateTimeline()
+            updatePaperColorIndicator(); updateFrameStatus(); updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
             scheduleAutosave()
         } finally {
@@ -1946,7 +1940,7 @@ class MainActivity : Activity() {
         }
         drawing.setFrame(0)
         drawing.resetViewport()
-        updateActiveToolButton(drawing.isEraser())
+        refreshActiveToolControls()
         if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
         updateFrameStatus()
         updateTimeline()
@@ -2506,7 +2500,7 @@ class MainActivity : Activity() {
             }
             updateFrameStatus()
             updateTimeline()
-            updateActiveToolButton(drawing.isEraser())
+            refreshActiveToolControls()
             updatePaperColorIndicator()
             setStatus("Sesión abierta · ${frameDurations.size} planos")
         } finally {
@@ -2658,7 +2652,7 @@ class MainActivity : Activity() {
                 projectName = "Mi storyboard"
                 if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
                 drawing.clearProject()
-                updateActiveToolButton(drawing.isEraser())
+                refreshActiveToolControls()
                 updatePaperColorIndicator()
                 activeSessionAssetDirectory?.deleteRecursively()
                 activeSessionAssetDirectory = null
@@ -2814,7 +2808,7 @@ class MainActivity : Activity() {
                 val total = frameDurations.size.coerceAtLeast(1)
                 frameDurations.indices.forEach { index ->
                     val page = pdf.startPage(PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create())
-                    page.canvas.drawColor(Color.WHITE)
+                    page.canvas.drawColor(drawing.canvasPaperColor())
                     drawing.drawFrameToCanvas(index, page.canvas)
                     pdf.finishPage(page)
                     progress.update(((index + 1) * 85 / total), "Preparando página ${index + 1} de $total")
