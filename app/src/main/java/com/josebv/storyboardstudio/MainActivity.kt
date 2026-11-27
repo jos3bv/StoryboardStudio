@@ -1842,6 +1842,7 @@ class MainActivity : Activity() {
         }
         drawing.setFrame(0)
         drawing.resetViewport()
+        updateActiveToolButton(drawing.isEraser())
         if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
         updateFrameStatus()
         updateTimeline()
@@ -2401,6 +2402,7 @@ class MainActivity : Activity() {
             }
             updateFrameStatus()
             updateTimeline()
+            updateActiveToolButton(drawing.isEraser())
             setStatus("Sesión abierta · ${frameDurations.size} planos")
         } finally {
             restoringSession = false
@@ -2551,6 +2553,7 @@ class MainActivity : Activity() {
                 projectName = "Mi storyboard"
                 if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
                 drawing.clearProject()
+                updateActiveToolButton(drawing.isEraser())
                 activeSessionAssetDirectory?.deleteRecursively()
                 activeSessionAssetDirectory = null
                 drawing.resetViewport()
