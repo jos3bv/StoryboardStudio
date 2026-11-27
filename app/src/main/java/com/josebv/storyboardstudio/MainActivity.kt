@@ -1677,11 +1677,15 @@ class MainActivity : Activity() {
 
     private fun commitStoredStrokePatch(patch: StoredStrokeHistoryPatch) {
         val previous = lastHistoryCheckpoint ?: return
+        val discardedRedo = redoHistory.isNotEmpty()
         undoHistory.addLast(previous)
         trimHistory(undoHistory)
         clearHistoryFiles(redoHistory)
         lastHistoryCheckpoint = HistoryCheckpoint(previous.baseFile, previous.patches + patch)
-        cleanupHistoryFiles()
+        // Scanning every retained patch after every stroke would itself become
+        // progressively more expensive. Reclaim orphaned files only when a redo
+        // branch is discarded; normal stroke commits only append one small record.
+        if (discardedRedo) cleanupHistoryFiles()
     }
 
     private fun commitCompletedStrokeHistory() {
@@ -1697,7 +1701,6 @@ class MainActivity : Activity() {
                 setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
             }
         }
-        cleanupHistoryFiles()
     }
 
     private fun awaitPendingStrokeHistory() {
@@ -2619,6 +2622,12 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             setStatus("Error al guardar sesión: ${e.message}")
             android.util.Log.e("StoryboardStudio", "Session save failed", e)
+            autosaveScheduled = false
+            if (autosaveDirty && !isFinishing && !isDestroyed && !restoringSession) {
+                autosaveScheduled = true
+                handler.removeCallbacks(autosaveRunnable)
+                handler.postDelayed(autosaveRunnable, 30_000)
+            }
         }
     }
 
