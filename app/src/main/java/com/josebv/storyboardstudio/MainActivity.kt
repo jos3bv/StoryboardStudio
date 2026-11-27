@@ -208,6 +208,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun clearStaleHistoryFiles() {
+        try { historyDirectory.listFiles()?.forEach { it.delete() } }
+        catch (e: Exception) {
+            android.util.Log.w("StoryboardStudio", "Could not clear temporary history", e)
+        }
+    }
+
     private fun extractArchive(archive: File): Pair<JSONObject, File> {
         val directory = File(cacheDir, "session_unpack_${SystemClock.uptimeMillis()}").apply {
             deleteRecursively(); mkdirs()
