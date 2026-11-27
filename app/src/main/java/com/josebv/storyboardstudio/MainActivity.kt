@@ -1510,6 +1510,7 @@ class MainActivity : Activity() {
             val preservedPencilSize = drawing.pencilToolSize()
             val preservedEraserSize = drawing.eraserToolSize()
             val preservedEraser = drawing.isEraser()
+            val preservedBackgroundPencil = drawing.isBackgroundPencil()
             val preservedOpacity = drawing.brushOpacity()
             val preservedPressure = drawing.pressureEnabled()
             val durations = snapshot.optJSONArray("durations")
@@ -1523,6 +1524,7 @@ class MainActivity : Activity() {
             drawing.setEraser(false); drawing.setActiveBrushSize(preservedPencilSize)
             drawing.setEraser(true); drawing.setActiveBrushSize(preservedEraserSize)
             drawing.setEraser(preservedEraser); drawing.setColor(preservedColor); drawing.setEraser(preservedEraser)
+            if (preservedBackgroundPencil) drawing.setBackgroundPencil(true)
             updateActiveToolButton(preservedEraser)
             drawing.configureBrush(if (preservedEraser) preservedEraserSize else preservedPencilSize,
                 preservedOpacity * 255 / 100, preservedPressure)
