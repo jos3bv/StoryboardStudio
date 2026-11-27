@@ -3868,6 +3868,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var inProgressBackground = false
     private var inProgressColor = Color.BLACK
     private var inProgressAlpha = 255
+    // Pointer indices can change between MotionEvents. Keep the active S Pen by stable pointer ID.
+    private var activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
     private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -4104,6 +4106,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         eyedropperActive = false
         eyedropperTouchInProgress = false
         inProgressBackground = false
+        activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
@@ -4974,10 +4977,78 @@ class DrawingView(context: android.content.Context) : View(context) {
         previousPoint?.let { canvas.drawCircle(it.x, it.y, previousWidth * 0.5f, fillPaint) }
     }
 
+    private fun isStylusTool(toolType: Int): Boolean =
+        toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+
+    private fun beginStylusStroke(
+        event: MotionEvent,
+        pointerIndex: Int,
+        left: Float,
+        top: Float,
+        boardScale: Float
+    ): Boolean {
+        if (pointerIndex !in 0 until event.pointerCount || !isStylusTool(event.getToolType(pointerIndex))) return false
+        val point = viewToDrawingPoint(event.getX(pointerIndex), event.getY(pointerIndex), left, top, boardScale)
+        if (point.x !in 0f..1920f || point.y !in 0f..1080f) return false
+
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) requestUnbufferedDispatch(event)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        activeStylusPointerId = event.getPointerId(pointerIndex)
+
+        val eraseStroke = eraser || backgroundEraser || event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_ERASER
+        inProgressBackground = backgroundPencil || backgroundEraser
+        val activeSettings = activeSettings()
+        if (!eraseStroke) onColorUsed?.invoke(activeSettings.color)
+        val strokeColor = Color.argb(
+            activeSettings.opacity,
+            Color.red(activeSettings.color),
+            Color.green(activeSettings.color),
+            Color.blue(activeSettings.color)
+        )
+        val pressure = event.getPressure(pointerIndex).coerceIn(0.05f, 1f)
+        val initialWidth = if (pressureSensitivity) {
+            activeSettings.size * (0.18f + pressure * pressure * 1.12f)
+        } else activeSettings.size
+        val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
+        current = stroke
+        beginInProgressStroke(point, initialWidth, stroke)
+        invalidate()
+        return true
+    }
+
+    private fun finishStylusStroke() {
+        val completed = current
+        if (completed != null) {
+            val targetBitmap = if (inProgressBackground) {
+                backgroundBitmapFor(frame, createIfMissing = true)!!
+            } else {
+                bitmapFor(frame)
+            }
+            // Commit the same in-progress surface shown during drawing; no second rasterization.
+            commitInProgressBitmap(targetBitmap)
+            clearInProgressDirtyRegion()
+            frames.remove(frame)
+        }
+        current = null
+        inProgressBackground = false
+        activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
+        invalidate()
+        parent?.requestDisallowInterceptTouchEvent(false)
+        if (completed != null) {
+            onChanged?.invoke()
+            onHistoryAction?.invoke()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val actionIndex = event.actionIndex.coerceIn(0, event.pointerCount - 1)
-        val tool = event.getToolType(actionIndex)
-        val stylus = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
+        val actionTool = event.getToolType(actionIndex)
+        // Never assume pointer index 0 is the S Pen. Android can reorder pointer indices
+        // between events; the pointer ID is the stable identity for the active stylus.
+        val stylusPointerIndex = (0 until event.pointerCount).firstOrNull {
+            isStylusTool(event.getToolType(it))
+        } ?: -1
+        val hasStylusPointer = stylusPointerIndex >= 0
 
         val boardScale = min((width * 0.94f) / 16f, (height * 0.90f) / 9f)
         val boardW = 16f * boardScale
@@ -5008,6 +5079,11 @@ class DrawingView(context: android.content.Context) : View(context) {
                     return true
                 }
             }
+            return true
+        }
+
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL && current != null) {
+            finishStylusStroke()
             return true
         }
 
@@ -5074,7 +5150,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
         }
 
-        if (!stylus) {
+        if (!hasStylusPointer) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
             current = null
@@ -5123,86 +5199,73 @@ class DrawingView(context: android.content.Context) : View(context) {
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
-                if (point.x !in 0f..1920f || point.y !in 0f..1080f) return true
-                // Ask Android for unbuffered stylus delivery while inking. Historical
-                // samples are still consumed below as a safety net for batched devices.
-                requestUnbufferedDispatch(event)
-                parent?.requestDisallowInterceptTouchEvent(true)
-                val eraseStroke = eraser || backgroundEraser || tool == MotionEvent.TOOL_TYPE_ERASER
-                inProgressBackground = backgroundPencil || backgroundEraser
-                val activeSettings = activeSettings()
-                if (!eraseStroke) onColorUsed?.invoke(activeSettings.color)
-                val strokeColor = Color.argb(
-                    activeSettings.opacity,
-                    Color.red(activeSettings.color),
-                    Color.green(activeSettings.color),
-                    Color.blue(activeSettings.color)
-                )
-                val initialPressure = event.pressure.coerceIn(0.05f, 1f)
-                val initialWidth = if (pressureSensitivity) activeSettings.size * (0.18f + initialPressure * initialPressure * 1.12f) else activeSettings.size
-                val stroke = Stroke(mutableListOf(point), mutableListOf(initialWidth), strokeColor, eraseStroke)
-                current = stroke
-                beginInProgressStroke(point, initialWidth, stroke)
-                invalidate()
+                if (hasStylusPointer) beginStylusStroke(event, stylusPointerIndex, left, top, boardScale)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // The S Pen may be introduced after a finger/palm contact. Start it from
+                // the action pointer, not from pointer index zero.
+                if (isStylusTool(actionTool)) beginStylusStroke(event, actionIndex, left, top, boardScale)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                val pointerIndex = if (activeStylusPointerId != MotionEvent.INVALID_POINTER_ID) {
+                    event.findPointerIndex(activeStylusPointerId)
+                } else {
+                    stylusPointerIndex
+                }
+                if (pointerIndex < 0 || !isStylusTool(event.getToolType(pointerIndex))) return true
                 val stroke = current ?: return true
-                for (pointer in 0 until event.pointerCount) {
-                    val pointerTool = event.getToolType(pointer)
-                    if (pointerTool != MotionEvent.TOOL_TYPE_STYLUS && pointerTool != MotionEvent.TOOL_TYPE_ERASER) continue
-                    fun appendSample(x: Float, y: Float, rawPressure: Float) {
-                        val pressure = rawPressure.coerceIn(0.05f, 1f)
-                        val point = viewToDrawingPoint(x, y, left, top, boardScale)
-                        if (point.x in 0f..1920f && point.y in 0f..1080f) {
-                            val prior = stroke.points.lastOrNull()
-                            val distance = if (prior == null) 999f else kotlin.math.hypot((point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()).toFloat()
-                            if (distance >= 0.65f) {
-                                val pressureFactor = if (pressureSensitivity) {
-                                    val curved = pressure * pressure
-                                    0.18f + curved * 1.12f
-                                } else 1f
-                                val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
-                                stroke.points.add(point)
-                                stroke.widths.add(nextWidth)
-                                appendInProgressSample(point, nextWidth)
-                            }
+
+                fun appendSample(x: Float, y: Float, rawPressure: Float) {
+                    val pressure = rawPressure.coerceIn(0.05f, 1f)
+                    val point = viewToDrawingPoint(x, y, left, top, boardScale)
+                    if (point.x in 0f..1920f && point.y in 0f..1080f) {
+                        val prior = stroke.points.lastOrNull()
+                        val distance = if (prior == null) 999f else kotlin.math.hypot(
+                            (point.x - prior.x).toDouble(), (point.y - prior.y).toDouble()
+                        ).toFloat()
+                        if (distance >= 0.65f) {
+                            val pressureFactor = if (pressureSensitivity) {
+                                val curved = pressure * pressure
+                                0.18f + curved * 1.12f
+                            } else 1f
+                            val nextWidth = (activeBrushSize() * pressureFactor).coerceAtLeast(0.5f)
+                            stroke.points.add(point)
+                            stroke.widths.add(nextWidth)
+                            appendInProgressSample(point, nextWidth)
                         }
                     }
-                    for (history in 0 until event.historySize) {
-                        appendSample(
-                            event.getHistoricalX(pointer, history),
-                            event.getHistoricalY(pointer, history),
-                            event.getHistoricalPressure(pointer, history)
-                        )
-                    }
-                    appendSample(event.getX(pointer), event.getY(pointer), event.getPressure(pointer))
                 }
+
+                // MotionEvent batches are chronological: consume all earlier samples
+                // before the current coordinates for this exact stylus pointer ID.
+                for (history in 0 until event.historySize) {
+                    appendSample(
+                        event.getHistoricalX(pointerIndex, history),
+                        event.getHistoricalY(pointerIndex, history),
+                        event.getHistoricalPressure(pointerIndex, history)
+                    )
+                }
+                appendSample(
+                    event.getX(pointerIndex),
+                    event.getY(pointerIndex),
+                    event.getPressure(pointerIndex)
+                )
                 postInvalidateOnAnimation()
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val completed = current
-                if (completed != null) {
-                    val targetBitmap = if (inProgressBackground) {
-                        backgroundBitmapFor(frame, createIfMissing = true)!!
-                    } else {
-                        bitmapFor(frame)
-                    }
-                    // Commit the exact bitmap used for the live preview.
-                    // Re-rasterizing the point list here caused a visible shape/width jump
-                    // and a long pause on dense stylus strokes.
-                    commitInProgressBitmap(targetBitmap)
-                    clearInProgressDirtyRegion()
-                    frames.remove(frame)
+            MotionEvent.ACTION_POINTER_UP -> {
+                // A finger/palm leaving must not finish the pen stroke. Only finish when
+                // the pointer being lifted is the active S Pen.
+                if (isStylusTool(actionTool) &&
+                    event.getPointerId(actionIndex) == activeStylusPointerId) {
+                    finishStylusStroke()
                 }
-                inProgressBackground = false
-                current = null
-                invalidate()
-                parent?.requestDisallowInterceptTouchEvent(false)
-                onChanged?.invoke()
-                onHistoryAction?.invoke()
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                finishStylusStroke()
                 return true
             }
         }
@@ -5350,6 +5413,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         eyedropperActive = false
         eyedropperTouchInProgress = false
         inProgressBackground = false
+        activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
