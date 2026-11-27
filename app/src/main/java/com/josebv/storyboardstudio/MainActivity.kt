@@ -42,6 +42,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import java.util.zip.Deflater
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import android.util.Base64
 import android.util.Base64InputStream
 import android.util.JsonReader
@@ -52,6 +54,27 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+
+private data class StrokeHistoryPatch(
+    val frame: Int,
+    val background: Boolean,
+    val left: Int,
+    val top: Int,
+    val bitmap: Bitmap
+)
+
+private data class StoredStrokeHistoryPatch(
+    val frame: Int,
+    val background: Boolean,
+    val left: Int,
+    val top: Int,
+    val file: File
+)
+
+private data class HistoryCheckpoint(
+    val baseFile: File,
+    val patches: List<StoredStrokeHistoryPatch>
+)
 
 class MainActivity : Activity() {
     companion object { private const val REQUEST_IMAGE = 8042; private const val REQUEST_SRT = 8043; private const val REQUEST_SESSION = 8044 }
@@ -111,14 +134,24 @@ class MainActivity : Activity() {
     private lateinit var projectTitleLabel: TextView
     private var updatingFromPlayback = false
     private val historyDirectory by lazy { File(cacheDir, "storyboard_history").apply { mkdirs() } }
-    private val undoHistory = ArrayDeque<File>()
-    private val redoHistory = ArrayDeque<File>()
+    private val undoHistory = ArrayDeque<HistoryCheckpoint>()
+    private val redoHistory = ArrayDeque<HistoryCheckpoint>()
     private var restoringHistory = false
-    private var lastHistoryStateFile: File? = null
+    private var lastHistoryCheckpoint: HistoryCheckpoint? = null
     private var activeSessionAssetDirectory: File? = null
     private var historyFileCounter = 0L
-    private val maxHistorySteps = 4
-    private val maxHistoryBytes = 128L * 1024L * 1024L
+    private val maxHistorySteps = 100
+    private val historyExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "StoryboardHistory").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }
+    }
+    private data class PendingStrokeHistory(
+        val patch: StoredStrokeHistoryPatch,
+        val future: Future<*>
+    )
+    private val pendingStrokeHistory = ArrayDeque<PendingStrokeHistory>()
 
     /** History checkpoints are ZIP streams of a small manifest plus PNG files.
      *  No full-project Base64 strings are created in memory. */
@@ -145,22 +178,31 @@ class MainActivity : Activity() {
         return file
     }
 
-    private fun trimHistory(queue: ArrayDeque<File>) {
-        var totalBytes = queue.sumOf { if (it.isFile) it.length() else 0L }
-        while (queue.isNotEmpty() && (queue.size > maxHistorySteps || totalBytes > maxHistoryBytes)) {
-            val oldest = queue.removeFirst()
-            if (oldest.isFile) totalBytes -= oldest.length()
-            oldest.delete()
+    private fun trimHistory(queue: ArrayDeque<HistoryCheckpoint>) {
+        while (queue.size > maxHistorySteps) queue.removeFirst()
+    }
+
+    private fun clearHistoryFiles(queue: ArrayDeque<HistoryCheckpoint>) {
+        queue.clear()
+    }
+
+    private fun cleanupHistoryFiles() {
+        val retained = mutableSetOf<String>()
+        fun retain(checkpoint: HistoryCheckpoint?) {
+            if (checkpoint == null) return
+            retained.add(checkpoint.baseFile.absolutePath)
+            checkpoint.patches.forEach { retained.add(it.file.absolutePath) }
         }
-    }
-
-    private fun clearHistoryFiles(queue: ArrayDeque<File>) {
-        while (queue.isNotEmpty()) queue.removeFirst().delete()
-    }
-
-    private fun clearStaleHistoryFiles() {
-        try { historyDirectory.listFiles()?.forEach { it.delete() } }
-        catch (e: Exception) { android.util.Log.w("StoryboardStudio", "Could not clear temporary history", e) }
+        retain(lastHistoryCheckpoint)
+        undoHistory.forEach { retain(it) }
+        redoHistory.forEach { retain(it) }
+        pendingStrokeHistory.forEach {
+            retained.add(it.patch.file.absolutePath)
+            retained.add(it.patch.file.absolutePath + ".writing")
+        }
+        historyDirectory.listFiles()?.forEach { file ->
+            if (file.absolutePath !in retained) file.delete()
+        }
     }
 
     private fun extractArchive(archive: File): Pair<JSONObject, File> {
@@ -435,6 +477,7 @@ class MainActivity : Activity() {
             onHistoryAction = {
                 if (!restoringHistory) scheduleHistoryRecord()
             }
+            onStrokeCommitted = { patch -> enqueueStrokeHistory(patch) }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
             onColorPicked = { pickedColor ->
                 rememberRecentColor(pickedColor)
@@ -1571,28 +1614,100 @@ class MainActivity : Activity() {
         if (::shotLabel.isInitialized) shotLabel.text = "${projectName}_${currentFrame + 1} · ${formatTime(duration)}"
     }
 
-    // Undo/redo is session-local. Each checkpoint streams PNG assets into a ZIP;
-    // the checkpoint is never persisted as part of the project itself.
+    // One full baseline plus incremental pixel patches. Each completed stroke
+    // creates its own checkpoint; patch compression is kept off the drawing thread.
     private fun resetHistory(reuseAutosave: Boolean = true) {
+        awaitPendingStrokeHistory()
         handler.removeCallbacks(pendingHistoryRunnable)
         historyRecordPending = false
-        clearHistoryFiles(undoHistory)
-        clearHistoryFiles(redoHistory)
-        lastHistoryStateFile?.delete()
+        undoHistory.clear()
+        redoHistory.clear()
+        lastHistoryCheckpoint = null
         historyDirectory.listFiles()?.forEach { it.delete() }
         val baseline = File(historyDirectory, "history_baseline.zip")
         val isArchive = reuseAutosave && if (sessionFile.isFile && sessionFile.length() > 2L) {
             sessionFile.inputStream().use { input -> input.read() == 0x50 && input.read() == 0x4b }
         } else false
-        lastHistoryStateFile = if (isArchive) {
+        val base = if (isArchive) {
             try { sessionFile.copyTo(baseline, overwrite = true) }
             catch (_: Exception) { storeHistoryState() }
         } else storeHistoryState()
+        lastHistoryCheckpoint = HistoryCheckpoint(base, emptyList())
+    }
+
+    private fun enqueueStrokeHistory(patch: StrokeHistoryPatch) {
+        if (restoringHistory) {
+            if (!patch.bitmap.isRecycled) patch.bitmap.recycle()
+            return
+        }
+        if (!historyDirectory.exists()) historyDirectory.mkdirs()
+        val file = File(historyDirectory, "stroke_patch_${historyFileCounter++}.png")
+        val stored = StoredStrokeHistoryPatch(patch.frame, patch.background, patch.left, patch.top, file)
+        val future = historyExecutor.submit {
+            val temp = File(file.parentFile, file.name + ".writing")
+            try {
+                FileOutputStream(temp).use { output ->
+                    if (!patch.bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                        throw java.io.IOException("No se pudo guardar el trazo en el historial")
+                    }
+                    output.flush()
+                }
+                if (!temp.renameTo(file)) throw java.io.IOException("No se pudo finalizar el historial del trazo")
+            } catch (error: Exception) {
+                temp.delete()
+                file.delete()
+                throw error
+            } finally {
+                if (!patch.bitmap.isRecycled) patch.bitmap.recycle()
+                handler.post { commitCompletedStrokeHistory() }
+            }
+        }
+        pendingStrokeHistory.addLast(PendingStrokeHistory(stored, future))
+    }
+
+    private fun commitStoredStrokePatch(patch: StoredStrokeHistoryPatch) {
+        val previous = lastHistoryCheckpoint ?: return
+        undoHistory.addLast(previous)
+        trimHistory(undoHistory)
+        clearHistoryFiles(redoHistory)
+        lastHistoryCheckpoint = HistoryCheckpoint(previous.baseFile, previous.patches + patch)
+        cleanupHistoryFiles()
+    }
+
+    private fun commitCompletedStrokeHistory() {
+        while (true) {
+            val pending = pendingStrokeHistory.firstOrNull() ?: break
+            if (!pending.future.isDone) break
+            pendingStrokeHistory.removeFirst()
+            try {
+                pending.future.get()
+                commitStoredStrokePatch(pending.patch)
+            } catch (error: Exception) {
+                pending.patch.file.delete()
+                setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
+            }
+        }
+        cleanupHistoryFiles()
+    }
+
+    private fun awaitPendingStrokeHistory() {
+        while (pendingStrokeHistory.isNotEmpty()) {
+            val pending = pendingStrokeHistory.removeFirst()
+            try {
+                pending.future.get()
+                commitStoredStrokePatch(pending.patch)
+            } catch (error: Exception) {
+                pending.patch.file.delete()
+                setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
+            }
+        }
+        cleanupHistoryFiles()
     }
 
     private fun recordHistory() {
         if (restoringHistory || !::drawing.isInitialized) return
-        val previous = lastHistoryStateFile
+        awaitPendingStrokeHistory()
+        val previous = lastHistoryCheckpoint
         val next = try { storeHistoryState() } catch (e: Exception) {
             setStatus("No se pudo registrar el historial: ${e.message}")
             return
@@ -1602,7 +1717,8 @@ class MainActivity : Activity() {
             trimHistory(undoHistory)
         }
         clearHistoryFiles(redoHistory)
-        lastHistoryStateFile = next
+        lastHistoryCheckpoint = HistoryCheckpoint(next, emptyList())
+        cleanupHistoryFiles()
     }
 
     private var historyRecordPending = false
@@ -1621,11 +1737,12 @@ class MainActivity : Activity() {
             historyRecordPending = false
             recordHistory()
         }
+        awaitPendingStrokeHistory()
         return pending
     }
 
-    private fun restoreHistoryState(file: File) {
-        val (snapshot, extracted) = extractArchive(file)
+    private fun restoreHistoryState(checkpoint: HistoryCheckpoint) {
+        val (snapshot, extracted) = extractArchive(checkpoint.baseFile)
         restoringHistory = true
         try {
             val preservedToolSettings = drawing.toolSettingsSnapshot()
@@ -1638,6 +1755,7 @@ class MainActivity : Activity() {
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject(), File(extracted, "frames"), currentFrame)
             adoptSessionAssets(File(extracted, "frames"))
+            drawing.applyHistoryPatches(checkpoint.patches)
             drawing.restoreToolSettings(preservedToolSettings)
             drawing.setActiveTool(preservedActiveTool)
             refreshActiveToolControls()
@@ -1655,17 +1773,16 @@ class MainActivity : Activity() {
     private fun undoGlobal() {
         flushPendingHistory()
         if (undoHistory.isEmpty()) return
-        val currentFile = try { storeHistoryState() } catch (e: Exception) {
-            setStatus("No se pudo crear el estado de rehacer: ${e.message}"); return
-        }
-        redoHistory.addLast(currentFile); trimHistory(redoHistory)
-        val previousFile = undoHistory.removeLast()
+        val previous = undoHistory.last()
+        val current = lastHistoryCheckpoint ?: return
         try {
-            restoreHistoryState(previousFile)
-            lastHistoryStateFile?.delete()
-            lastHistoryStateFile = previousFile
+            restoreHistoryState(previous)
+            undoHistory.removeLast()
+            redoHistory.addLast(current)
+            trimHistory(redoHistory)
+            lastHistoryCheckpoint = previous
+            cleanupHistoryFiles()
         } catch (e: Exception) {
-            previousFile.delete()
             setStatus("No se pudo recuperar el historial: ${e.message}")
         }
     }
@@ -1673,17 +1790,16 @@ class MainActivity : Activity() {
     private fun redoGlobal() {
         flushPendingHistory()
         if (redoHistory.isEmpty()) return
-        val currentFile = try { storeHistoryState() } catch (e: Exception) {
-            setStatus("No se pudo crear el estado de deshacer: ${e.message}"); return
-        }
-        undoHistory.addLast(currentFile); trimHistory(undoHistory)
-        val nextFile = redoHistory.removeLast()
+        val next = redoHistory.last()
+        val current = lastHistoryCheckpoint ?: return
         try {
-            restoreHistoryState(nextFile)
-            lastHistoryStateFile?.delete()
-            lastHistoryStateFile = nextFile
+            restoreHistoryState(next)
+            redoHistory.removeLast()
+            undoHistory.addLast(current)
+            trimHistory(undoHistory)
+            lastHistoryCheckpoint = next
+            cleanupHistoryFiles()
         } catch (e: Exception) {
-            nextFile.delete()
             setStatus("No se pudo recuperar el historial: ${e.message}")
         }
     }
@@ -2405,13 +2521,18 @@ class MainActivity : Activity() {
     private fun scheduleAutosave() {
         if (restoringSession) return
         handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 8_000)
+        handler.postDelayed(autosaveRunnable, 30_000)
     }
 
     private val autosaveRunnable = object : Runnable {
         override fun run() {
             if (!isFinishing && !isDestroyed && !restoringSession && ::drawing.isInitialized) {
-                saveSession(showMessage = false)
+                // Do not compress the complete session while the S Pen is touching the canvas.
+                if (drawing.isStrokeInProgress()) {
+                    handler.postDelayed(this, 1_000)
+                } else {
+                    saveSession(showMessage = false)
+                }
             }
         }
     }
@@ -2949,8 +3070,8 @@ class MainActivity : Activity() {
         if (::drawing.isInitialized) drawing.releaseCachedBitmaps(clearUndoHistory = true)
         clearHistoryFiles(undoHistory)
         clearHistoryFiles(redoHistory)
-        lastHistoryStateFile?.delete()
-        lastHistoryStateFile = null
+        lastHistoryCheckpoint = null
+        historyExecutor.shutdownNow()
         activeSessionAssetDirectory?.deleteRecursively()
         activeSessionAssetDirectory = null
         stopPlayback()
@@ -3599,6 +3720,7 @@ private data class Stroke(
 class DrawingView(context: android.content.Context) : View(context) {
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
+    var onStrokeCommitted: ((StrokeHistoryPatch) -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
     var onColorPicked: ((Int) -> Unit)? = null
     var onLassoStateChanged: ((Boolean) -> Unit)? = null
@@ -5016,16 +5138,35 @@ class DrawingView(context: android.content.Context) : View(context) {
         return true
     }
 
+    fun isStrokeInProgress(): Boolean = current != null
+
     private fun finishStylusStroke() {
         val completed = current
         if (completed != null) {
-            val targetBitmap = if (inProgressBackground) {
+            val targetBackground = inProgressBackground
+            val targetBitmap = if (targetBackground) {
                 backgroundBitmapFor(frame, createIfMissing = true)!!
             } else {
                 bitmapFor(frame)
             }
-            // Commit the same in-progress surface shown during drawing; no second rasterization.
+            // Commit the same in-progress surface used by the live preview.
             commitInProgressBitmap(targetBitmap)
+
+            // Capture only the changed rectangle after commit. This preserves exact
+            // pixels for pencil and eraser while keeping PNG compression off the UI thread.
+            val bounds = inProgressBounds
+            if (bounds != null) {
+                val left = kotlin.math.floor(bounds.left).toInt().coerceIn(0, targetBitmap.width)
+                val top = kotlin.math.floor(bounds.top).toInt().coerceIn(0, targetBitmap.height)
+                val right = kotlin.math.ceil(bounds.right).toInt().coerceIn(0, targetBitmap.width)
+                val bottom = kotlin.math.ceil(bounds.bottom).toInt().coerceIn(0, targetBitmap.height)
+                if (right > left && bottom > top) {
+                    val patchBitmap = Bitmap.createBitmap(targetBitmap, left, top, right - left, bottom - top)
+                    onStrokeCommitted?.invoke(
+                        StrokeHistoryPatch(frame, targetBackground, left, top, patchBitmap)
+                    )
+                }
+            }
             clearInProgressDirtyRegion()
             frames.remove(frame)
         }
@@ -5034,10 +5175,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
         invalidate()
         parent?.requestDisallowInterceptTouchEvent(false)
-        if (completed != null) {
-            onChanged?.invoke()
-            onHistoryAction?.invoke()
-        }
+        if (completed != null) onChanged?.invoke()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -5280,6 +5418,50 @@ class DrawingView(context: android.content.Context) : View(context) {
             }
         }
         return true
+    }
+
+    fun applyHistoryPatches(patches: List<StoredStrokeHistoryPatch>) {
+        if (patches.isEmpty()) return
+        patches.groupBy { it.frame }.forEach { (frameIndex, framePatches) ->
+            val foregroundPatches = framePatches.filterNot { it.background }
+            if (foregroundPatches.isNotEmpty()) {
+                val target = bitmapFor(frameIndex)
+                val paint = Paint().apply {
+                    xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+                }
+                foregroundPatches.forEach { patch ->
+                    val image = BitmapFactory.decodeFile(patch.file.absolutePath)
+                        ?: throw IllegalStateException("No se pudo recuperar un trazo del historial")
+                    try {
+                        Canvas(target).drawBitmap(image, patch.left.toFloat(), patch.top.toFloat(), paint)
+                    } finally {
+                        image.recycle()
+                    }
+                }
+                paint.xfermode = null
+                if (frameIndex != frame) spillFrameBitmap(frameIndex)
+            }
+
+            val backgroundPatches = framePatches.filter { it.background }
+            if (backgroundPatches.isNotEmpty()) {
+                val target = backgroundBitmapFor(frameIndex, createIfMissing = true)!!
+                val paint = Paint().apply {
+                    xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+                }
+                backgroundPatches.forEach { patch ->
+                    val image = BitmapFactory.decodeFile(patch.file.absolutePath)
+                        ?: throw IllegalStateException("No se pudo recuperar un trazo del historial de fondo")
+                    try {
+                        Canvas(target).drawBitmap(image, patch.left.toFloat(), patch.top.toFloat(), paint)
+                    } finally {
+                        image.recycle()
+                    }
+                }
+                paint.xfermode = null
+                if (frameIndex != frame) spillBackgroundFrameBitmap(frameIndex)
+            }
+        }
+        invalidate()
     }
 
     fun toJson(includeBitmapData: Boolean = true): JSONObject {
