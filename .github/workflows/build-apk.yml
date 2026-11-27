@@ -7,6 +7,7 @@ on:
       - main
       - master
       - feature/background-pencil-0.9.75
+      - feature/background-eraser-paper-0.9.76
 
 permissions:
   contents: read
@@ -61,7 +62,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BV-Storyboarder-0.9.75-debug
+          name: BV-Storyboarder-0.9.76-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
