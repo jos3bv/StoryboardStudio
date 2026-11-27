@@ -1634,7 +1634,7 @@ class MainActivity : Activity() {
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
             inlineColorPicker?.setColor(preservedColor)
-            updateSelectedColorIndicator(); updateFrameStatus(); updateTimeline()
+            updateSelectedColorIndicator(); updatePaperColorIndicator(); updateFrameStatus(); updateTimeline()
             timelineView.setSelectedFrame(currentFrame)
             scheduleAutosave()
         } finally {
@@ -1937,6 +1937,7 @@ class MainActivity : Activity() {
         frameDurations.addAll(blocks.map { (it.endMs - it.startMs).coerceAtLeast(100) })
         currentFrame = 0
         drawing.clearProject()
+        updatePaperColorIndicator()
         activeSessionAssetDirectory?.deleteRecursively()
         activeSessionAssetDirectory = null
         blocks.forEachIndexed { index, block ->
@@ -2658,6 +2659,7 @@ class MainActivity : Activity() {
                 if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
                 drawing.clearProject()
                 updateActiveToolButton(drawing.isEraser())
+                updatePaperColorIndicator()
                 activeSessionAssetDirectory?.deleteRecursively()
                 activeSessionAssetDirectory = null
                 drawing.resetViewport()
