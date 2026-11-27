@@ -99,6 +99,9 @@ class MainActivity : Activity() {
     private val exportsDirectory by lazy { File(appStorageDirectory, "Exports/PNG") }
     private val pdfDirectory by lazy { File(appStorageDirectory, "Exports/PDF") }
     private var restoringSession = false
+    private var autosaveDirty = false
+    private var autosaveScheduled = false
+    private var lastAutosaveChangeUptime = 0L
     private var audioUri: Uri? = null
     private var audioDurationMs = 0
     private var audioActionButton: View? = null
@@ -2520,20 +2523,32 @@ class MainActivity : Activity() {
 
     private fun scheduleAutosave() {
         if (restoringSession) return
-        handler.removeCallbacks(autosaveRunnable)
-        handler.postDelayed(autosaveRunnable, 30_000)
+        autosaveDirty = true
+        lastAutosaveChangeUptime = SystemClock.uptimeMillis()
+        if (!autosaveScheduled) {
+            autosaveScheduled = true
+            handler.postDelayed(autosaveRunnable, 30_000)
+        }
     }
 
     private val autosaveRunnable = object : Runnable {
         override fun run() {
-            if (!isFinishing && !isDestroyed && !restoringSession && ::drawing.isInitialized) {
-                // Do not compress the complete session while the S Pen is touching the canvas.
-                if (drawing.isStrokeInProgress()) {
-                    handler.postDelayed(this, 1_000)
-                } else {
-                    saveSession(showMessage = false)
-                }
+            if (isFinishing || isDestroyed || restoringSession || !::drawing.isInitialized) {
+                autosaveScheduled = false
+                return
             }
+            if (!autosaveDirty) {
+                autosaveScheduled = false
+                return
+            }
+            val quietTime = SystemClock.uptimeMillis() - lastAutosaveChangeUptime
+            // Keep the 30-second cadence, but wait until the pen is lifted and input
+            // has been quiet briefly so saving cannot interrupt a continuous drawing.
+            if (drawing.isStrokeInProgress() || quietTime < 1_000L) {
+                handler.postDelayed(this, 500)
+                return
+            }
+            saveSession(showMessage = false)
         }
     }
 
@@ -2590,6 +2605,9 @@ class MainActivity : Activity() {
         if (!::drawing.isInitialized || restoringSession) return
         try {
             writeProjectArchive(sessionFile)
+            autosaveDirty = false
+            autosaveScheduled = false
+            handler.removeCallbacks(autosaveRunnable)
             if (showMessage) Toast.makeText(this, "Sesión guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             setStatus("Error al guardar sesión: ${e.message}")
