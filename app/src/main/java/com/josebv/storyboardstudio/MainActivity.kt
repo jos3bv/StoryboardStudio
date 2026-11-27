@@ -5261,6 +5261,16 @@ class DrawingView(context: android.content.Context) : View(context) {
                 if (isStylusTool(actionTool) &&
                     event.getPointerId(actionIndex) == activeStylusPointerId) {
                     finishStylusStroke()
+                    // If a finger/palm remains on the screen, resume panning from its
+                    // current location rather than from a stale pre-ink coordinate.
+                    val remainingFinger = (0 until event.pointerCount).firstOrNull {
+                        it != actionIndex && !isStylusTool(event.getToolType(it))
+                    }
+                    if (remainingFinger != null) {
+                        lastFingerX = event.getX(remainingFinger)
+                        lastFingerY = event.getY(remainingFinger)
+                        previousSpan = 0f
+                    }
                 }
                 return true
             }
