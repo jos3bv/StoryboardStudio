@@ -55,7 +55,7 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-private data class StrokeHistoryPatch(
+data class StrokeHistoryPatch(
     val frame: Int,
     val background: Boolean,
     val left: Int,
@@ -63,7 +63,7 @@ private data class StrokeHistoryPatch(
     val bitmap: Bitmap
 )
 
-private data class StoredStrokeHistoryPatch(
+data class StoredStrokeHistoryPatch(
     val frame: Int,
     val background: Boolean,
     val left: Int,
