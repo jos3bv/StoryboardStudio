@@ -1,6 +1,6 @@
 package com.josebv.storyboardstudio
 
-// BV'Storyboarder 0.9.73 - clean session archive and temporary undo history.
+// BV'Storyboarder 0.9.75 - experimental background pencil.
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -4219,20 +4219,32 @@ class DrawingView(context: android.content.Context) : View(context) {
         // paper is white. Erased pixels therefore reveal white instead of the dark UI.
         canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
         // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
+        val backgroundBitmap = backgroundBitmapFor(frame, createIfMissing = false)
         val unifiedBitmap = bitmapFor(frame)
-        val inkBitmap = unifiedBitmap
         val wetBitmap = inProgressBitmap
         val wetBounds = inProgressBounds
-        if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
+
+        // Composite order: white paper -> background-pencil ink -> existing foreground art.
+        backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
+
+        if (current != null && inProgressBackground && wetBitmap != null && wetBounds != null) {
+            canvas.save()
+            canvas.clipRect(wetBounds)
+            inProgressDisplayPaint.alpha = inProgressAlpha
+            canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
+            inProgressDisplayPaint.alpha = 255
+            canvas.restore()
+            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        } else if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
             val inkLayer = canvas.saveLayer(boardBounds, null)
-            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
             canvas.save()
             canvas.clipRect(wetBounds)
             canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
             canvas.restore()
             canvas.restoreToCount(inkLayer)
         } else {
-            canvas.drawBitmap(inkBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
             if (current != null && wetBitmap != null && wetBounds != null) {
                 canvas.save()
                 canvas.clipRect(wetBounds)
@@ -4800,6 +4812,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                 requestUnbufferedDispatch(event)
                 parent?.requestDisallowInterceptTouchEvent(true)
                 val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
+                inProgressBackground = backgroundPencil && !eraseStroke
                 if (!eraseStroke) onColorUsed?.invoke(color)
                 val strokeColor = Color.argb(
                     brushOpacity,
@@ -4853,15 +4866,20 @@ class DrawingView(context: android.content.Context) : View(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val completed = current
                 if (completed != null) {
-                    val targetBitmap = bitmapFor(frame)
+                    val targetBitmap = if (inProgressBackground) {
+                        backgroundBitmapFor(frame, createIfMissing = true)!!
+                    } else {
+                        bitmapFor(frame)
+                    }
                     // Commit the exact bitmap used for the live preview.
                     // Re-rasterizing the point list here caused a visible shape/width jump
                     // and a long pause on dense stylus strokes.
                     commitInProgressBitmap(targetBitmap)
                     clearInProgressDirtyRegion()
                     frames.remove(frame)
-                                    }
-        current = null
+                }
+                inProgressBackground = false
+                current = null
                 invalidate()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 onChanged?.invoke()
@@ -4881,7 +4899,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
         val frameArray = JSONArray()
-        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
+        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
+            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys).toSet().sorted()
         indices.forEach { index ->
             val frameObject = JSONObject()
             frameObject.put("index", index)
@@ -4892,28 +4911,55 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val storedFile = frameBitmapFiles[index]
                 val pngBytes = when {
                     resident != null && !resident.isRecycled -> java.io.ByteArrayOutputStream().use { out ->
-                        if (!resident.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                        if (!resident.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano " + (index + 1))
                         out.toByteArray()
                     }
                     storedFile != null && storedFile.isFile && storedFile.length() > 0L -> storedFile.readBytes()
                     else -> {
                         val bitmap = bitmapFor(index)
                         java.io.ByteArrayOutputStream().use { out ->
-                            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("No se pudo guardar el plano " + (index + 1))
                             out.toByteArray()
                         }.also { if (index != frame) spillFrameBitmap(index) }
                     }
                 }
                 frameObject.put("bitmap", Base64.encodeToString(pngBytes, Base64.NO_WRAP))
             } else {
-                frameObject.put("bitmapEntry", "frames/frame_${index}.png")
+                frameObject.put("bitmapEntry", "frames/frame_" + index + ".png")
             }
+
+            val backgroundResident = backgroundFrameBitmaps[index]
+            val backgroundStored = backgroundFrameBitmapFiles[index]
+            val hasBackground = (backgroundResident != null && !backgroundResident.isRecycled) ||
+                (backgroundStored != null && backgroundStored.isFile && backgroundStored.length() > 0L)
+            if (hasBackground) {
+                if (includeBitmapData) {
+                    val backgroundBytes = when {
+                        backgroundResident != null && !backgroundResident.isRecycled ->
+                            java.io.ByteArrayOutputStream().use { out ->
+                                if (!backgroundResident.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                                    throw java.io.IOException("No se pudo guardar el fondo del plano " + (index + 1))
+                                }
+                                out.toByteArray()
+                            }
+                        backgroundStored != null -> backgroundStored.readBytes()
+                        else -> ByteArray(0)
+                    }
+                    frameObject.put("backgroundBitmap", Base64.encodeToString(backgroundBytes, Base64.NO_WRAP))
+                } else {
+                    frameObject.put("backgroundBitmapEntry", "background/frame_" + index + ".png")
+                }
+            }
+
             val noteArray = JSONArray()
             notes[index]?.firstOrNull()?.let { noteArray.put(it) }
             frameObject.put("notes", noteArray)
             noteColors[index]?.let { frameObject.put("noteColor", it) }
             frameArray.put(frameObject)
-            if (!includeBitmapData && index != frame) spillFrameBitmap(index)
+            if (!includeBitmapData && index != frame) {
+                spillFrameBitmap(index)
+                spillBackgroundFrameBitmap(index)
+            }
         }
         root.put("frames", frameArray)
         bitmapFor(frame)
@@ -4921,24 +4967,45 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun writeFramePngEntries(zip: ZipOutputStream) {
-        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys).toSet().sorted()
+        val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
+            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys).toSet().sorted()
         indices.forEach { index ->
             bakeLegacyFrame(index)
-            zip.putNextEntry(ZipEntry("frames/frame_${index}.png"))
+            zip.putNextEntry(ZipEntry("frames/frame_" + index + ".png"))
             val resident = frameBitmaps[index]
             val stored = frameBitmapFiles[index]
             when {
                 resident != null && !resident.isRecycled -> {
-                    if (!resident.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                    if (!resident.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano " + (index + 1))
                 }
                 stored != null && stored.isFile && stored.length() > 0L -> stored.inputStream().buffered().use { it.copyTo(zip, 64 * 1024) }
                 else -> {
                     val bitmap = bitmapFor(index)
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano ${index + 1}")
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip)) throw java.io.IOException("No se pudo guardar el plano " + (index + 1))
                     if (index != frame) spillFrameBitmap(index)
                 }
             }
             zip.closeEntry()
+
+            val backgroundResident = backgroundFrameBitmaps[index]
+            val backgroundStored = backgroundFrameBitmapFiles[index]
+            val hasBackground = (backgroundResident != null && !backgroundResident.isRecycled) ||
+                (backgroundStored != null && backgroundStored.isFile && backgroundStored.length() > 0L)
+            if (hasBackground) {
+                zip.putNextEntry(ZipEntry("frames/background/frame_" + index + ".png"))
+                when {
+                    backgroundResident != null && !backgroundResident.isRecycled -> {
+                        if (!backgroundResident.compress(Bitmap.CompressFormat.PNG, 100, zip)) {
+                            throw java.io.IOException("No se pudo guardar el fondo del plano " + (index + 1))
+                        }
+                    }
+                    backgroundStored != null && backgroundStored.isFile -> backgroundStored.inputStream().buffered().use {
+                        it.copyTo(zip, 64 * 1024)
+                    }
+                }
+                zip.closeEntry()
+                if (index != frame) spillBackgroundFrameBitmap(index)
+            }
         }
     }
 
@@ -4950,6 +5017,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        backgroundFrameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
+        backgroundFrameBitmaps.clear()
+        backgroundFrameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
+        backgroundFrameBitmapFiles.clear()
+        backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        backgroundPencil = false
+        inProgressBackground = false
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
@@ -5040,6 +5114,39 @@ class DrawingView(context: android.content.Context) : View(context) {
                 } catch (_: Exception) { }
                 bakeLegacyFrame(index)
             }
+            val backgroundEntry = frameObject.optString("backgroundBitmapEntry", "")
+            if (backgroundEntry.isNotBlank() && assetDirectory != null) {
+                val safeFileName = File(backgroundEntry).name
+                val source = File(File(assetDirectory, "background"), safeFileName)
+                if (!source.isFile || source.length() <= 0L) {
+                    throw IllegalStateException("Falta el fondo del plano " + (index + 1))
+                }
+                backgroundFrameBitmapFiles[index] = source
+            }
+            val backgroundData = frameObject.optString("backgroundBitmap", "")
+            if (backgroundData.isNotBlank() && !backgroundFrameBitmapFiles.containsKey(index)) {
+                try {
+                    val encoded = Base64.decode(backgroundData, Base64.DEFAULT)
+                    if (index == frame) {
+                        val decoded = BitmapFactory.decodeByteArray(encoded, 0, encoded.size)
+                            ?: throw IllegalStateException("PNG de fondo inválido en el plano " + (index + 1))
+                        val normalized = if (decoded.width == 1920 && decoded.height == 1080 &&
+                            decoded.config == Bitmap.Config.ARGB_8888 && decoded.isMutable) decoded else {
+                            Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
+                                Canvas(target).drawBitmap(decoded, null, Rect(0, 0, 1920, 1080),
+                                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                                if (!decoded.isRecycled) decoded.recycle()
+                            }
+                        }
+                        backgroundFrameBitmaps[index] = normalized
+                    } else {
+                        val backgroundFile = backgroundFrameFile(index)
+                        FileOutputStream(backgroundFile).use { it.write(encoded) }
+                    }
+                } catch (e: Exception) {
+                    throw IllegalStateException("No se pudo recuperar el fondo del plano " + (index + 1) + ": " + e.message, e)
+                }
+            }
             val noteArray = frameObject.optJSONArray("notes") ?: JSONArray()
             if (noteArray.length() > 0) {
                 notes[index] = mutableListOf(noteArray.optString(0))
@@ -5052,9 +5159,13 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
+        backgroundBitmapFor(index, createIfMissing = false)?.let {
+            canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        }
         val frameBitmap = bitmapFor(index)
         canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         if (index != frame) {
+            spillBackgroundFrameBitmap(index)
             spillFrameBitmap(index)
             bitmapFor(frame)
         }
@@ -5087,9 +5198,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
         bakeLegacyFrame(index)
+        backgroundBitmapFor(index, createIfMissing = false)?.let {
+            canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        }
         val frameBitmap = bitmapFor(index)
         canvas.drawBitmap(frameBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         if (index != frame) {
+            spillBackgroundFrameBitmap(index)
             spillFrameBitmap(index)
             bitmapFor(frame)
         }
