@@ -85,6 +85,7 @@ class MainActivity : Activity() {
     private var eraserToolButton: Button? = null
     private var pressureToolButton: Button? = null
     private var lassoToolButton: Button? = null
+    private var backgroundPencilToolButton: Button? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -628,7 +629,7 @@ class MainActivity : Activity() {
                     }
                     action()
                     if (description != "Selección tipo lazo") updateModeToolAlpha(lassoActive = false)
-                    if (description == "Lápiz" || description == "Goma") {
+                    if (description == "Lápiz" || description == "Goma" || description == "Lápiz de fondo") {
                         updateActiveToolButton(description == "Goma")
                     }
                 }
@@ -646,6 +647,13 @@ class MainActivity : Activity() {
             clipToPadding = false
         }
         val toolRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            clipChildren = false
+            clipToPadding = false
+        }
+        val toolRow3 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 0)
@@ -690,6 +698,13 @@ class MainActivity : Activity() {
             updateModeToolAlpha(lassoActive = true)
         }
         addToolCell(toolRow2, lassoToolButton!!)
+        backgroundPencilToolButton = tool("ic_background_pencil", "Lápiz de fondo") {
+            drawing.setBackgroundPencil(true)
+            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            updateActiveToolButton(false)
+            setStatus("Lápiz de fondo activo")
+        }
+        addToolCell(toolRow3, backgroundPencilToolButton!!)
         toolButtons.forEach { button ->
             button.tag = false
             button.compoundDrawables.getOrNull(1)?.alpha = 128
@@ -700,7 +715,8 @@ class MainActivity : Activity() {
         // Tool buttons are flush: row height matches button height exactly, with no hidden vertical gap.
         toolsGrid.addView(toolRow1, LinearLayout.LayoutParams(-1, dp(40)))
         toolsGrid.addView(toolRow2, LinearLayout.LayoutParams(-1, dp(40)))
-        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(80)))
+        toolsGrid.addView(toolRow3, LinearLayout.LayoutParams(-1, dp(40)))
+        sideContent.addView(toolsGrid, LinearLayout.LayoutParams(-1, dp(120)))
 
         val importLabel = TextView(this).apply {
             text = "Importar"
@@ -1103,9 +1119,23 @@ class MainActivity : Activity() {
     private fun setButtonIcon(button: Button, drawableName: String, sizeDp: Int = 30, transparent: Boolean = true) {
         val resourceId = resources.getIdentifier(drawableName, "drawable", packageName)
         if (resourceId == 0) return
-        val bitmap = BitmapFactory.decodeResource(resources, resourceId) ?: return
-        val drawable = android.graphics.drawable.BitmapDrawable(resources, bitmap)
         val size = dp(sizeDp)
+        val sourceDrawable = if (Build.VERSION.SDK_INT >= 21) {
+            resources.getDrawable(resourceId, theme)
+        } else {
+            @Suppress("DEPRECATION")
+            resources.getDrawable(resourceId)
+        }
+        val bitmap = if (sourceDrawable is android.graphics.drawable.BitmapDrawable) {
+            Bitmap.createScaledBitmap(sourceDrawable.bitmap, size, size, true)
+        } else {
+            Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { target ->
+                val iconCanvas = Canvas(target)
+                sourceDrawable.setBounds(0, 0, size, size)
+                sourceDrawable.draw(iconCanvas)
+            }
+        }
+        val drawable = android.graphics.drawable.BitmapDrawable(resources, bitmap)
         drawable.setBounds(0, 0, size, size)
         button.text = ""
         drawable.alpha = if (button.tag == true) 255 else 128
@@ -1246,8 +1276,12 @@ class MainActivity : Activity() {
     }
 
     private fun updateActiveToolButton(eraserActive: Boolean = drawing.isEraser()) {
-        activeToolButton = if (eraserActive) eraserToolButton else pencilToolButton
-        listOf(pencilToolButton, eraserToolButton).forEach { button ->
+        activeToolButton = when {
+            drawing.isBackgroundPencil() -> backgroundPencilToolButton
+            eraserActive -> eraserToolButton
+            else -> pencilToolButton
+        }
+        listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton).forEach { button ->
             button ?: return@forEach
             val selected = button === activeToolButton
             button.tag = selected
@@ -3455,8 +3489,14 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val frameBitmapFiles = mutableMapOf<Int, File>()
     private val frameBitmapDirectory = File(context.filesDir, "storyboard_frame_cache").apply { mkdirs() }
 
+    // Experimental background-pencil surface, stored independently from foreground art.
+    private val backgroundFrameBitmaps = mutableMapOf<Int, Bitmap>()
+    private val backgroundFrameBitmapFiles = mutableMapOf<Int, File>()
+    private val backgroundFrameBitmapDirectory = File(context.filesDir, "storyboard_background_cache").apply { mkdirs() }
+
     init {
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
         setBackgroundColor(Color.TRANSPARENT)
     }
 
@@ -3548,6 +3588,92 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmapFiles.clear()
         frameBitmapFiles.putAll(moved)
     }
+    private fun backgroundFrameFile(index: Int): File {
+        backgroundFrameBitmapFiles[index]?.let { return it }
+        return File(backgroundFrameBitmapDirectory, "background_" + index + "_" + java.util.UUID.randomUUID() + ".png")
+            .also { backgroundFrameBitmapFiles[index] = it }
+    }
+
+    private fun spillBackgroundFrameBitmap(index: Int) {
+        val bitmap = backgroundFrameBitmaps[index] ?: return
+        if (bitmap.isRecycled) {
+            backgroundFrameBitmaps.remove(index)
+            return
+        }
+        val target = backgroundFrameFile(index)
+        val temp = File(target.parentFile, target.name + ".tmp")
+        val saved = try {
+            FileOutputStream(temp).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    throw java.io.IOException("No se pudo comprimir el fondo del plano " + (index + 1))
+                }
+                out.flush()
+            }
+            if (target.exists()) target.delete()
+            temp.renameTo(target) || temp.copyTo(target, overwrite = true).let { temp.delete(); true }
+        } catch (_: Exception) {
+            temp.delete()
+            false
+        }
+        if (saved) {
+            backgroundFrameBitmaps.remove(index)
+            bitmap.recycle()
+        } else {
+            throw IllegalStateException("No se pudo liberar la memoria del fondo del plano " + (index + 1))
+        }
+    }
+
+    private fun spillInactiveBackgroundFrameBitmaps(keepIndex: Int) {
+        backgroundFrameBitmaps.keys.toList().filter { it != keepIndex }.forEach { spillBackgroundFrameBitmap(it) }
+    }
+
+    private fun backgroundBitmapFor(index: Int = frame, createIfMissing: Boolean = true): Bitmap? {
+        backgroundFrameBitmaps[index]?.let { if (!it.isRecycled) return it }
+        spillInactiveBackgroundFrameBitmaps(index)
+        val file = backgroundFrameBitmapFiles[index]
+        val loaded = if (file != null && file.isFile && file.length() > 0L) {
+            try { BitmapFactory.decodeFile(file.absolutePath) } catch (_: Exception) { null }
+        } else null
+        val bitmap = if (loaded != null) {
+            val normalized = if (loaded.width == 1920 && loaded.height == 1080 &&
+                loaded.config == Bitmap.Config.ARGB_8888 && loaded.isMutable) {
+                loaded
+            } else {
+                Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888).also { target ->
+                    Canvas(target).drawBitmap(
+                        loaded, null, Rect(0, 0, 1920, 1080),
+                        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    )
+                    if (!loaded.isRecycled) loaded.recycle()
+                }
+            }
+            backgroundFrameBitmapFiles.remove(index)?.let { if (it.exists()) it.delete() }
+            normalized
+        } else {
+            if (file != null && file.exists() && file.length() > 0L) {
+                throw IllegalStateException("No se pudo recuperar el fondo del plano " + (index + 1))
+            }
+            if (!createIfMissing) return null
+            Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
+        }
+        backgroundFrameBitmaps[index] = bitmap
+        return bitmap
+    }
+
+    private fun deleteStoredBackgroundFrame(index: Int) {
+        backgroundFrameBitmapFiles.remove(index)?.let { if (it.exists()) it.delete() }
+        backgroundFrameBitmaps.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+    }
+
+    private fun shiftStoredBackgroundFrameFiles(mapIndex: (Int) -> Int?) {
+        val moved = mutableMapOf<Int, File>()
+        backgroundFrameBitmapFiles.forEach { (old, file) ->
+            mapIndex(old)?.let { moved[it] = file } ?: file.delete()
+        }
+        backgroundFrameBitmapFiles.clear()
+        backgroundFrameBitmapFiles.putAll(moved)
+    }
+
     private fun rasterizeStroke(target: Bitmap, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
         val c = Canvas(target)
@@ -3616,6 +3742,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var inProgressLastPoint: PointF? = null
     private var inProgressLastWidth = 0f
     private var inProgressErase = false
+    private var inProgressBackground = false
     private var inProgressColor = Color.BLACK
     private var inProgressAlpha = 255
     private val rasterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
@@ -3629,6 +3756,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var brushOpacity = 255
     private var pressureSensitivity = true
     private var eraser = false
+    private var backgroundPencil = false
 
     // Editable lasso selection: original strokes remain vector-like point/pressure data.
     private var lassoEnabled = false
@@ -3678,9 +3806,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (releaseActive) {
             spillInactiveFrameBitmaps(-1)
             frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
+            spillInactiveBackgroundFrameBitmaps(-1)
+            backgroundFrameBitmaps.keys.toList().forEach { spillBackgroundFrameBitmap(it) }
             releaseInProgressSurface()
         } else {
             spillInactiveFrameBitmaps(frame)
+            spillInactiveBackgroundFrameBitmaps(frame)
             if (current == null) releaseInProgressSurface()
         }
     }
@@ -3827,6 +3958,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (index == frame) { bitmapFor(index); invalidate(); return }
         cancelSelection()
         spillFrameBitmap(frame)
+        spillBackgroundFrameBitmap(frame)
         frame = index
         bitmapFor(frame)
         invalidate()
@@ -3838,6 +3970,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         frameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
         frameBitmapFiles.clear()
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        backgroundFrameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
+        backgroundFrameBitmaps.clear()
+        backgroundFrameBitmapFiles.values.forEach { if (it.exists()) it.delete() }
+        backgroundFrameBitmapFiles.clear()
+        backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
+        backgroundPencil = false
+        inProgressBackground = false
         notes.clear()
         noteColors.clear()
         importedImages.values.distinct().forEach { if (!it.isRecycled) it.recycle() }
@@ -3850,18 +3989,27 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidate()
         onChanged?.invoke()
     }
-    fun setEraser(value: Boolean) { eraser = value }
+    fun setEraser(value: Boolean) {
+        eraser = value
+        backgroundPencil = false
+    }
+    fun setBackgroundPencil(value: Boolean) {
+        backgroundPencil = value
+        if (value) eraser = false
+        invalidate()
+    }
+    fun isBackgroundPencil(): Boolean = backgroundPencil
     fun isEraser(): Boolean = eraser
     fun activeBrushSize(): Float = if (eraser) eraserBrush else brush
     fun pencilToolSize(): Float = brush
     fun eraserToolSize(): Float = eraserBrush
     fun setActiveBrushSize(size: Float) { if (eraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
-    fun setColor(value: Int) { color = value; eraser = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
+    fun setColor(value: Int) { color = value; eraser = false; backgroundPencil = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
     fun currentColor(): Int = Color.HSVToColor(floatArrayOf(hue,saturation,value))
     fun currentHue() = hue
     fun currentSaturation() = saturation*100f
     fun currentValue() = value*100f
-    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; invalidate() }
+    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; backgroundPencil=false; invalidate() }
     fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
     fun brushSize(): Float = activeBrushSize()
     fun addImportedImage(bitmap: Bitmap) {
@@ -3906,6 +4054,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         deleteStoredFrame(frame)
         frames.remove(frame)
         importedImages.remove(frame)?.let { if (!it.isRecycled) it.recycle() }
+        deleteStoredBackgroundFrame(frame)
         invalidate()
         onChanged?.invoke()
         onHistoryAction?.invoke()
@@ -3929,12 +4078,20 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun duplicateFrame(source: Int, target: Int) {
         bakeLegacyFrame(source)
         val sourceBitmap = bitmapFor(source).copy(Bitmap.Config.ARGB_8888, true)
+        val sourceBackgroundBitmap = backgroundFrameBitmaps[source]?.takeIf { !it.isRecycled }?.copy(Bitmap.Config.ARGB_8888, true)
+        val sourceBackgroundFile = backgroundFrameBitmapFiles[source]?.takeIf { it.isFile }?.let { sourceFile ->
+            File(backgroundFrameBitmapDirectory, "background_duplicate_" + java.util.UUID.randomUUID() + ".png").also {
+                sourceFile.copyTo(it, overwrite = true)
+            }
+        }
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.take(1)?.toMutableList()
         val sourceNoteColor = noteColors[source]
         shiftFramesForInsert(target)
         if (sourceStrokes != null) frames[target] = sourceStrokes
         sourceBitmap?.let { frameBitmaps[target] = it }
+        sourceBackgroundBitmap?.let { backgroundFrameBitmaps[target] = it }
+        sourceBackgroundFile?.let { backgroundFrameBitmapFiles[target] = it }
         if (sourceNotes != null) notes[target] = sourceNotes
         sourceNoteColor?.let { noteColors[target] = it }
         importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
@@ -3956,6 +4113,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.putAll(newFrames)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>=at) k+1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         shiftStoredFrameFiles { old -> if (old >= at) old + 1 else old }
+        val shiftedBackgroundBitmaps = mutableMapOf<Int, Bitmap>()
+        backgroundFrameBitmaps.forEach { (k, v) -> shiftedBackgroundBitmaps[if (k >= at) k + 1 else k] = v }
+        backgroundFrameBitmaps.clear(); backgroundFrameBitmaps.putAll(shiftedBackgroundBitmaps)
+        shiftStoredBackgroundFrameFiles { old -> if (old >= at) old + 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> shiftedImages[if(k>=at) k+1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> newNotes[if (key >= at) key + 1 else key] = value }
@@ -3973,8 +4134,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear()
         frames.putAll(newFrames)
         deleteStoredFrame(index)
+        deleteStoredBackgroundFrame(index)
         val shiftedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (k,v) -> shiftedBitmaps[if(k>index) k-1 else k]=v }; frameBitmaps.clear(); frameBitmaps.putAll(shiftedBitmaps)
         shiftStoredFrameFiles { old -> if (old == index) null else if (old > index) old - 1 else old }
+        val shiftedBackgroundBitmaps = mutableMapOf<Int, Bitmap>()
+        backgroundFrameBitmaps.forEach { (k, v) -> shiftedBackgroundBitmaps[if (k > index) k - 1 else k] = v }
+        backgroundFrameBitmaps.clear(); backgroundFrameBitmaps.putAll(shiftedBackgroundBitmaps)
+        shiftStoredBackgroundFrameFiles { old -> if (old == index) null else if (old > index) old - 1 else old }
         val shiftedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (k,v) -> if(k!=index) shiftedImages[if(k>index) k-1 else k]=v }; importedImages.clear(); importedImages.putAll(shiftedImages)
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         notes.forEach { (key, value) -> if (key != index) newNotes[if (key > index) key - 1 else key] = value }
@@ -3989,7 +4155,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun moveFrame(from: Int, to: Int) {
         if (from == to) return
-        val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + notes.keys + importedImages.keys).toSet()
+        val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys + notes.keys + importedImages.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         allKeys.forEach { old ->
@@ -4005,6 +4171,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         frames.clear(); frames.putAll(newFrames)
         val movedBitmaps = mutableMapOf<Int, Bitmap>(); frameBitmaps.forEach { (old,bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedBitmaps[new]=bmp }; frameBitmaps.clear(); frameBitmaps.putAll(movedBitmaps)
         shiftStoredFrameFiles { old -> when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old } }
+        val movedBackgroundBitmaps = mutableMapOf<Int, Bitmap>()
+        backgroundFrameBitmaps.forEach { (old, bmp) ->
+            val new = when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old }
+            movedBackgroundBitmaps[new] = bmp
+        }
+        backgroundFrameBitmaps.clear(); backgroundFrameBitmaps.putAll(movedBackgroundBitmaps)
+        shiftStoredBackgroundFrameFiles { old -> when { old == from -> to; from < to && old in (from + 1)..to -> old - 1; from > to && old in to until from -> old + 1; else -> old } }
         val movedImages = mutableMapOf<Int, Bitmap>(); importedImages.forEach { (old, bmp) -> val new = when { old==from -> to; from<to && old in (from+1)..to -> old-1; from>to && old in to until from -> old+1; else -> old }; movedImages[new]=bmp }; importedImages.clear(); importedImages.putAll(movedImages)
         notes.clear(); notes.putAll(newNotes)
         val movedNoteColors = mutableMapOf<Int, Int>()
