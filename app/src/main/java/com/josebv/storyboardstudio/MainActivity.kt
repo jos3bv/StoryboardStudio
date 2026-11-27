@@ -3878,6 +3878,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var backgroundPencil = false
     private var backgroundEraser = false
     private var eyedropperActive = false
+    private var eyedropperTouchInProgress = false
     private var paperColor = Color.WHITE
 
     // Editable lasso selection: original strokes remain vector-like point/pressure data.
@@ -4101,6 +4102,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundEraser = false
         paperColor = Color.WHITE
         eyedropperActive = false
+        eyedropperTouchInProgress = false
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
@@ -4155,6 +4157,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val picked = sampleCompositeColor(point) ?: return false
         activeSettings().color = picked
         eyedropperActive = false
+        eyedropperTouchInProgress = true
         invalidate()
         onColorPicked?.invoke(picked)
         return true
@@ -4982,6 +4985,14 @@ class DrawingView(context: android.content.Context) : View(context) {
         val left = (width - boardW) / 2f
         val top = (height - boardH) / 2f
 
+        if (eyedropperTouchInProgress) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                eyedropperTouchInProgress = false
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            return true
+        }
+
         if (eyedropperActive) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -5337,6 +5348,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundPencil = false
         backgroundEraser = false
         eyedropperActive = false
+        eyedropperTouchInProgress = false
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
