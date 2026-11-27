@@ -86,6 +86,8 @@ class MainActivity : Activity() {
     private var pressureToolButton: Button? = null
     private var lassoToolButton: Button? = null
     private var backgroundPencilToolButton: Button? = null
+    private var backgroundEraserToolButton: Button? = null
+    private var paperColorIndicator: View? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
     private var recentColorContainer: LinearLayout? = null
@@ -548,7 +550,7 @@ class MainActivity : Activity() {
             }
             contentDescription = "Color seleccionado"
         }
-        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(24)).apply {
+        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(20)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             setMargins(0, dp(2), 0, dp(3))
         })
@@ -566,7 +568,33 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(24)))
+        val paperColorRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = "Cambiar color del fondo del lienzo"
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showPaperColorDialog() }
+        }
+        val paperColorLabel = TextView(this).apply {
+            text = "Fondo del lienzo"
+            setTextColor(Color.LTGRAY)
+            textSize = 10f
+            gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false
+        }
+        paperColorRow.addView(paperColorLabel, LinearLayout.LayoutParams(0, -1, 1f))
+        paperColorIndicator = View(this).apply {
+            contentDescription = "Color actual del fondo del lienzo"
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(drawing.canvasPaperColor())
+                setStroke(dp(1), Color.WHITE)
+                cornerRadius = dp(3).toFloat()
+            }
+        }
+        paperColorRow.addView(paperColorIndicator, LinearLayout.LayoutParams(dp(26), dp(14)))
+        swatchWrap.addView(paperColorRow, LinearLayout.LayoutParams(-1, dp(18)))
+        swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(16)))
         val grayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -584,16 +612,17 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
+            grayRow.addView(chip, LinearLayout.LayoutParams(0, dp(16), 1f).apply {
                 setMargins(dp(0.25f), dp(0.25f), dp(0.25f), dp(0.25f))
             })
         }
-        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(24)))
+        swatchWrap.addView(grayRow, LinearLayout.LayoutParams(-1, dp(16)))
         sideContent.addView(swatchWrap, LinearLayout.LayoutParams(-1, dp(52)).apply {
             // Small gap to the HSV selector; more breathing room before tool buttons.
             setMargins(0, 0, 0, dp(8))
         })
         refreshRecentColorSwatches()
+        updatePaperColorIndicator()
 
         // Tool buttons: two explicit weighted rows. This avoids GridLayout width collapse
         // observed on some tablet densities with zero-width weighted children.
@@ -629,7 +658,8 @@ class MainActivity : Activity() {
                     }
                     action()
                     if (description != "Selección tipo lazo") updateModeToolAlpha(lassoActive = false)
-                    if (description == "Lápiz" || description == "Goma" || description == "Lápiz de fondo") {
+                    if (description == "Lápiz" || description == "Goma" ||
+                        description == "Lápiz de fondo" || description == "Goma de fondo") {
                         updateActiveToolButton(description == "Goma")
                     }
                 }
@@ -698,13 +728,20 @@ class MainActivity : Activity() {
             updateModeToolAlpha(lassoActive = true)
         }
         addToolCell(toolRow2, lassoToolButton!!)
-        backgroundPencilToolButton = tool("ic_background_pencil", "Lápiz de fondo") {
+        backgroundPencilToolButton = tool("ic_pencil", "Lápiz de fondo") {
             drawing.setBackgroundPencil(true)
             brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
             updateActiveToolButton(false)
             setStatus("Lápiz de fondo activo")
         }
         addToolCell(toolRow3, backgroundPencilToolButton!!)
+        backgroundEraserToolButton = tool("ic_eraser", "Goma de fondo") {
+            drawing.setBackgroundEraser(true)
+            brushSizeSlider?.setValue(drawing.activeBrushSize().toInt())
+            updateActiveToolButton(false)
+            setStatus("Goma de fondo activa")
+        }
+        addToolCell(toolRow3, backgroundEraserToolButton!!)
         toolButtons.forEach { button ->
             button.tag = false
             button.compoundDrawables.getOrNull(1)?.alpha = 128
@@ -1278,10 +1315,11 @@ class MainActivity : Activity() {
     private fun updateActiveToolButton(eraserActive: Boolean = drawing.isEraser()) {
         activeToolButton = when {
             drawing.isBackgroundPencil() -> backgroundPencilToolButton
+            drawing.isBackgroundEraser() -> backgroundEraserToolButton
             eraserActive -> eraserToolButton
             else -> pencilToolButton
         }
-        listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton).forEach { button ->
+        listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton, backgroundEraserToolButton).forEach { button ->
             button ?: return@forEach
             val selected = button === activeToolButton
             button.tag = selected
@@ -1310,6 +1348,69 @@ class MainActivity : Activity() {
         indicator.invalidate()
     }
 
+    private fun updatePaperColorIndicator() {
+        val indicator = paperColorIndicator ?: return
+        indicator.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(drawing.canvasPaperColor())
+            setStroke(dp(1), Color.WHITE)
+            cornerRadius = dp(3).toFloat()
+        }
+        indicator.invalidate()
+    }
+
+    private fun showPaperColorDialog() {
+        val initialHsv = FloatArray(3)
+        Color.colorToHSV(drawing.canvasPaperColor(), initialHsv)
+        var selectedColor = drawing.canvasPaperColor()
+        val preview = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(selectedColor)
+                setStroke(dp(1), Color.LTGRAY)
+                cornerRadius = dp(4).toFloat()
+            }
+        }
+        val dialogContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val previewLabel = TextView(this).apply {
+            text = "Vista previa del papel"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        dialogContent.addView(previewLabel, LinearLayout.LayoutParams(-1, dp(24)))
+        dialogContent.addView(preview, LinearLayout.LayoutParams(-1, dp(28)).apply {
+            setMargins(0, 0, 0, dp(8))
+        })
+        val paperPicker = HueSatValPickerView(
+            this, initialHsv[0], initialHsv[1], initialHsv[2]
+        ) { h, sat, v ->
+            selectedColor = Color.HSVToColor(floatArrayOf(h, sat, v))
+            preview.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(selectedColor)
+                setStroke(dp(1), Color.LTGRAY)
+                cornerRadius = dp(4).toFloat()
+            }
+        }
+        dialogContent.addView(paperPicker, LinearLayout.LayoutParams(-1, dp(230)))
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Color del fondo del lienzo")
+            .setView(dialogContent)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Aplicar", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                drawing.setCanvasPaperColor(selectedColor)
+                updatePaperColorIndicator()
+                scheduleAutosave()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
     private fun refreshRecentColorSwatches() {
         val row = recentColorContainer ?: return
         row.removeAllViews()
@@ -1325,7 +1426,7 @@ class MainActivity : Activity() {
                     scheduleAutosave()
                 }
             }
-            row.addView(chip, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
+            row.addView(chip, LinearLayout.LayoutParams(0, dp(16), 1f).apply {
                 setMargins(dp(0), 1, dp(0), 1)
             })
         }
@@ -1511,6 +1612,7 @@ class MainActivity : Activity() {
             val preservedEraserSize = drawing.eraserToolSize()
             val preservedEraser = drawing.isEraser()
             val preservedBackgroundPencil = drawing.isBackgroundPencil()
+            val preservedBackgroundEraser = drawing.isBackgroundEraser()
             val preservedOpacity = drawing.brushOpacity()
             val preservedPressure = drawing.pressureEnabled()
             val durations = snapshot.optJSONArray("durations")
@@ -1525,8 +1627,9 @@ class MainActivity : Activity() {
             drawing.setEraser(true); drawing.setActiveBrushSize(preservedEraserSize)
             drawing.setEraser(preservedEraser); drawing.setColor(preservedColor); drawing.setEraser(preservedEraser)
             if (preservedBackgroundPencil) drawing.setBackgroundPencil(true)
+            if (preservedBackgroundEraser) drawing.setBackgroundEraser(true)
             updateActiveToolButton(preservedEraser)
-            drawing.configureBrush(if (preservedEraser) preservedEraserSize else preservedPencilSize,
+            drawing.configureBrush(if (preservedEraser || preservedBackgroundEraser) preservedEraserSize else preservedPencilSize,
                 preservedOpacity * 255 / 100, preservedPressure)
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.setFrame(currentFrame)
@@ -2403,6 +2506,7 @@ class MainActivity : Activity() {
             updateFrameStatus()
             updateTimeline()
             updateActiveToolButton(drawing.isEraser())
+            updatePaperColorIndicator()
             setStatus("Sesión abierta · ${frameDurations.size} planos")
         } finally {
             restoringSession = false
@@ -3762,6 +3866,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var pressureSensitivity = true
     private var eraser = false
     private var backgroundPencil = false
+    private var backgroundEraser = false
+    private var paperColor = Color.WHITE
 
     // Editable lasso selection: original strokes remain vector-like point/pressure data.
     private var lassoEnabled = false
@@ -3981,6 +4087,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundFrameBitmapFiles.clear()
         backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
         backgroundPencil = false
+        backgroundEraser = false
+        paperColor = Color.WHITE
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
@@ -3997,24 +4105,45 @@ class DrawingView(context: android.content.Context) : View(context) {
     fun setEraser(value: Boolean) {
         eraser = value
         backgroundPencil = false
+        backgroundEraser = false
     }
     fun setBackgroundPencil(value: Boolean) {
         backgroundPencil = value
-        if (value) eraser = false
+        if (value) {
+            eraser = false
+            backgroundEraser = false
+        }
+        invalidate()
+    }
+    fun setBackgroundEraser(value: Boolean) {
+        backgroundEraser = value
+        if (value) {
+            eraser = false
+            backgroundPencil = false
+        }
         invalidate()
     }
     fun isBackgroundPencil(): Boolean = backgroundPencil
+    fun isBackgroundEraser(): Boolean = backgroundEraser
     fun isEraser(): Boolean = eraser
-    fun activeBrushSize(): Float = if (eraser) eraserBrush else brush
+    fun activeBrushSize(): Float = if (eraser || backgroundEraser) eraserBrush else brush
     fun pencilToolSize(): Float = brush
     fun eraserToolSize(): Float = eraserBrush
-    fun setActiveBrushSize(size: Float) { if (eraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
-    fun setColor(value: Int) { color = value; eraser = false; backgroundPencil = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
+    fun setActiveBrushSize(size: Float) { if (eraser || backgroundEraser) eraserBrush = size.coerceIn(1f,200f) else brush = size.coerceIn(1f,200f) }
+    fun setColor(value: Int) { color = value; eraser = false; backgroundPencil = false; backgroundEraser = false; val hsv=FloatArray(3); Color.colorToHSV(value,hsv); hue=hsv[0]; saturation=hsv[1]; this.value=hsv[2] }
     fun currentColor(): Int = Color.HSVToColor(floatArrayOf(hue,saturation,value))
+    fun canvasPaperColor(): Int = paperColor
+    fun setCanvasPaperColor(value: Int) {
+        if (paperColor == value) return
+        paperColor = value
+        invalidate()
+        onChanged?.invoke()
+        onHistoryAction?.invoke()
+    }
     fun currentHue() = hue
     fun currentSaturation() = saturation*100f
     fun currentValue() = value*100f
-    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; backgroundPencil=false; invalidate() }
+    fun setColorFromHsv(h:Float,s:Float,v:Float) { hue=h.coerceIn(0f,359f); saturation=s.coerceIn(0f,1f); value=v.coerceIn(0f,1f); color=currentColor(); eraser=false; backgroundPencil=false; backgroundEraser=false; invalidate() }
     fun changeBrush(delta: Float) { setActiveBrushSize(activeBrushSize() + delta) }
     fun brushSize(): Float = activeBrushSize()
     fun addImportedImage(bitmap: Bitmap) {
@@ -4220,43 +4349,54 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
-        // The editable bitmap remains RGBA/transparent, but the visible storyboard
-        // paper is white. Erased pixels therefore reveal white instead of the dark UI.
-        canvas.drawRect(boardBounds, Paint().apply { color = Color.WHITE; style = Paint.Style.FILL })
+        // The editable bitmap stays transparent; the paper color is composited underneath.
+        canvas.drawRect(boardBounds, Paint().apply { color = paperColor; style = Paint.Style.FILL })
         // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
         val backgroundBitmap = backgroundBitmapFor(frame, createIfMissing = false)
         val unifiedBitmap = bitmapFor(frame)
         val wetBitmap = inProgressBitmap
         val wetBounds = inProgressBounds
 
-        // Composite order: white paper -> background-pencil ink -> existing foreground art.
-        backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
-
+        // Preview background strokes and erasures on the lower surface only.
         if (current != null && inProgressBackground && wetBitmap != null && wetBounds != null) {
-            canvas.save()
-            canvas.clipRect(wetBounds)
-            inProgressDisplayPaint.alpha = inProgressAlpha
-            canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
-            inProgressDisplayPaint.alpha = 255
-            canvas.restore()
-            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-        } else if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
-            val inkLayer = canvas.saveLayer(boardBounds, null)
-            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-            canvas.save()
-            canvas.clipRect(wetBounds)
-            canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
-            canvas.restore()
-            canvas.restoreToCount(inkLayer)
-        } else {
-            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
-            if (current != null && wetBitmap != null && wetBounds != null) {
+            if (inProgressErase) {
+                val bgLayer = canvas.saveLayer(boardBounds, null)
+                backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
+                canvas.save()
+                canvas.clipRect(wetBounds)
+                canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+                canvas.restore()
+                canvas.restoreToCount(bgLayer)
+            } else {
+                backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
                 canvas.save()
                 canvas.clipRect(wetBounds)
                 inProgressDisplayPaint.alpha = inProgressAlpha
                 canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
                 inProgressDisplayPaint.alpha = 255
                 canvas.restore()
+            }
+            canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        } else {
+            backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG)) }
+            if (current != null && inProgressErase && wetBitmap != null && wetBounds != null) {
+                val inkLayer = canvas.saveLayer(boardBounds, null)
+                canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+                canvas.save()
+                canvas.clipRect(wetBounds)
+                canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressErasePaint)
+                canvas.restore()
+                canvas.restoreToCount(inkLayer)
+            } else {
+                canvas.drawBitmap(unifiedBitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+                if (current != null && wetBitmap != null && wetBounds != null) {
+                    canvas.save()
+                    canvas.clipRect(wetBounds)
+                    inProgressDisplayPaint.alpha = inProgressAlpha
+                    canvas.drawBitmap(wetBitmap, 0f, 0f, inProgressDisplayPaint)
+                    inProgressDisplayPaint.alpha = 255
+                    canvas.restore()
+                }
             }
         }
         drawNote(canvas, frame)
@@ -4816,8 +4956,8 @@ class DrawingView(context: android.content.Context) : View(context) {
                 // samples are still consumed below as a safety net for batched devices.
                 requestUnbufferedDispatch(event)
                 parent?.requestDisallowInterceptTouchEvent(true)
-                val eraseStroke = eraser || tool == MotionEvent.TOOL_TYPE_ERASER
-                inProgressBackground = backgroundPencil && !eraseStroke
+                val eraseStroke = eraser || backgroundEraser || tool == MotionEvent.TOOL_TYPE_ERASER
+                inProgressBackground = backgroundPencil || backgroundEraser
                 if (!eraseStroke) onColorUsed?.invoke(color)
                 val strokeColor = Color.argb(
                     brushOpacity,
@@ -4903,6 +5043,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         root.put("brushColor", color)
         root.put("brushOpacity", brushOpacity)
         root.put("pressureSensitivity", pressureSensitivity)
+        root.put("paperColor", paperColor)
         val frameArray = JSONArray()
         val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
             backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys).toSet().sorted()
@@ -5028,6 +5169,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundFrameBitmapFiles.clear()
         backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
         backgroundPencil = false
+        backgroundEraser = false
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
@@ -5043,6 +5185,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         brushOpacity = root.optInt("brushOpacity", 255).coerceIn(0, 255)
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
+        paperColor = root.optInt("paperColor", Color.WHITE)
         val array = root.optJSONArray("frames") ?: JSONArray()
         for (i in 0 until array.length()) {
             val frameObject = array.optJSONObject(i) ?: continue
@@ -5164,6 +5307,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
+        canvas.drawRect(0f, 0f, 1920f, 1080f, Paint().apply { color = paperColor; style = Paint.Style.FILL })
         backgroundBitmapFor(index, createIfMissing = false)?.let {
             canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         }
@@ -5201,7 +5345,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun renderFrame(index: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
+        canvas.drawColor(paperColor)
         bakeLegacyFrame(index)
         backgroundBitmapFor(index, createIfMissing = false)?.let {
             canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
