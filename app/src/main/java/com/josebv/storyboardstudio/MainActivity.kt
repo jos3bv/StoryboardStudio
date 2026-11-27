@@ -87,6 +87,7 @@ class MainActivity : Activity() {
     private var lassoToolButton: Button? = null
     private var backgroundPencilToolButton: Button? = null
     private var backgroundEraserToolButton: Button? = null
+    private var eyedropperToolButton: Button? = null
     private var paperColorIndicator: View? = null
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
@@ -435,6 +436,12 @@ class MainActivity : Activity() {
                 if (!restoringHistory) scheduleHistoryRecord()
             }
             onColorUsed = { usedColor -> rememberRecentColor(usedColor) }
+            onColorPicked = { pickedColor ->
+                rememberRecentColor(pickedColor)
+                refreshActiveToolControls()
+                setStatus("Color capturado")
+                scheduleAutosave()
+            }
             onLassoStateChanged = { active -> updateModeToolAlpha(lassoActive = active) }
         }
         if (recentColors.isEmpty()) {
@@ -658,7 +665,8 @@ class MainActivity : Activity() {
                     action()
                     if (description != "Selección tipo lazo") updateModeToolAlpha(lassoActive = false)
                     if (description == "Lápiz" || description == "Goma" ||
-                        description == "Lápiz de fondo" || description == "Goma de fondo") {
+                        description == "Lápiz de fondo" || description == "Goma de fondo" ||
+                        description == "Cuentagotas") {
                         updateActiveToolButton()
                     }
                 }
@@ -739,6 +747,12 @@ class MainActivity : Activity() {
             setStatus("Goma de fondo activa")
         }
         addToolCell(toolRow3, backgroundEraserToolButton!!)
+        eyedropperToolButton = tool("ic_eyedropper", "Cuentagotas") {
+            drawing.activateEyedropper()
+            updateActiveToolButton()
+            setStatus("Toca el lienzo para capturar un color")
+        }
+        addToolCell(toolRow3, eyedropperToolButton!!)
         toolButtons.forEach { button ->
             button.tag = false
             button.compoundDrawables.getOrNull(1)?.alpha = 128
@@ -1313,12 +1327,13 @@ class MainActivity : Activity() {
 
     private fun updateActiveToolButton() {
         activeToolButton = when {
+            drawing.isEyedropperActive() -> eyedropperToolButton
             drawing.isBackgroundPencil() -> backgroundPencilToolButton
             drawing.isBackgroundEraser() -> backgroundEraserToolButton
             drawing.isEraser() -> eraserToolButton
             else -> pencilToolButton
         }
-        listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton, backgroundEraserToolButton).forEach { button ->
+        listOf(pencilToolButton, eraserToolButton, backgroundPencilToolButton, backgroundEraserToolButton, eyedropperToolButton).forEach { button ->
             button ?: return@forEach
             val selected = button === activeToolButton
             button.tag = selected
@@ -3585,6 +3600,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     var onChanged: (() -> Unit)? = null
     var onHistoryAction: (() -> Unit)? = null
     var onColorUsed: ((Int) -> Unit)? = null
+    var onColorPicked: ((Int) -> Unit)? = null
     var onLassoStateChanged: ((Boolean) -> Unit)? = null
     // Legacy data is retained only as an import decoder; active artwork is frameBitmaps.
     private val frames = mutableMapOf<Int, MutableList<Stroke>>()
@@ -3861,6 +3877,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var eraser = false
     private var backgroundPencil = false
     private var backgroundEraser = false
+    private var eyedropperActive = false
     private var paperColor = Color.WHITE
 
     // Editable lasso selection: original strokes remain vector-like point/pressure data.
@@ -4083,6 +4100,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundPencil = false
         backgroundEraser = false
         paperColor = Color.WHITE
+        eyedropperActive = false
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
@@ -4103,10 +4121,50 @@ class DrawingView(context: android.content.Context) : View(context) {
         else -> pencilSettings
     }
 
+    private fun compositeSourceOver(source: Int, destination: Int): Int {
+        val sourceAlpha = Color.alpha(source) / 255f
+        if (sourceAlpha <= 0f) return destination
+        if (sourceAlpha >= 1f) return source
+        val destinationAlpha = Color.alpha(destination) / 255f
+        val outputAlpha = sourceAlpha + destinationAlpha * (1f - sourceAlpha)
+        if (outputAlpha <= 0f) return Color.TRANSPARENT
+        val destinationWeight = destinationAlpha * (1f - sourceAlpha)
+        val red = ((Color.red(source) * sourceAlpha + Color.red(destination) * destinationWeight) / outputAlpha).roundToInt()
+        val green = ((Color.green(source) * sourceAlpha + Color.green(destination) * destinationWeight) / outputAlpha).roundToInt()
+        val blue = ((Color.blue(source) * sourceAlpha + Color.blue(destination) * destinationWeight) / outputAlpha).roundToInt()
+        return Color.argb(
+            (outputAlpha * 255f).roundToInt().coerceIn(0, 255),
+            red.coerceIn(0, 255), green.coerceIn(0, 255), blue.coerceIn(0, 255)
+        )
+    }
+
+    private fun sampleCompositeColor(point: PointF): Int? {
+        if (point.x !in 0f..1920f || point.y !in 0f..1080f) return null
+        val pixelX = kotlin.math.floor(point.x).toInt().coerceIn(0, 1919)
+        val pixelY = kotlin.math.floor(point.y).toInt().coerceIn(0, 1079)
+        bakeLegacyFrame(frame)
+        var result = paperColor
+        backgroundBitmapFor(frame, createIfMissing = false)?.let { layer ->
+            result = compositeSourceOver(layer.getPixel(pixelX, pixelY), result)
+        }
+        result = compositeSourceOver(bitmapFor(frame).getPixel(pixelX, pixelY), result)
+        return result
+    }
+
+    private fun pickColorAt(point: PointF): Boolean {
+        val picked = sampleCompositeColor(point) ?: return false
+        activeSettings().color = picked
+        eyedropperActive = false
+        invalidate()
+        onColorPicked?.invoke(picked)
+        return true
+    }
+
     fun setEraser(value: Boolean) {
         eraser = value
         backgroundPencil = false
         backgroundEraser = false
+        eyedropperActive = false
         invalidate()
     }
     fun setBackgroundPencil(value: Boolean) {
@@ -4114,6 +4172,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             backgroundPencil = true
             backgroundEraser = false
             eraser = false
+            eyedropperActive = false
         } else {
             backgroundPencil = false
         }
@@ -4124,6 +4183,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             backgroundEraser = true
             backgroundPencil = false
             eraser = false
+            eyedropperActive = false
         } else {
             backgroundEraser = false
             backgroundPencil = true
@@ -4131,6 +4191,13 @@ class DrawingView(context: android.content.Context) : View(context) {
         }
         invalidate()
     }
+    fun activateEyedropper() {
+        cancelSelection()
+        eyedropperActive = true
+        invalidate()
+    }
+    fun isEyedropperActive(): Boolean = eyedropperActive
+
     fun togglePencilEraser() {
         if (backgroundPencil || backgroundEraser) setBackgroundEraser(!backgroundEraser)
         else setEraser(!eraser)
@@ -4915,6 +4982,24 @@ class DrawingView(context: android.content.Context) : View(context) {
         val left = (width - boardW) / 2f
         val top = (height - boardH) / 2f
 
+        if (eyedropperActive) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val point = viewToDrawingPoint(event.x, event.y, left, top, boardScale)
+                    if (pickColorAt(point)) {
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> return true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    return true
+                }
+            }
+            return true
+        }
+
         if (lassoEnabled || hasSelection()) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -5251,6 +5336,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
         backgroundPencil = false
         backgroundEraser = false
+        eyedropperActive = false
         inProgressBackground = false
         notes.clear()
         noteColors.clear()
