@@ -3217,6 +3217,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     private var staticTimelineStartX = 0
     private var audioPlaceholderBitmap: Bitmap? = null
     private var durations = listOf(3000)
+    private var frameStartsMs = intArrayOf(0)
     private var selected = 0
     private var waveform = FloatArray(0)
     private val recentColors = mutableListOf<Int>()
@@ -3342,6 +3343,13 @@ class TimelineView(context: android.content.Context) : View(context) {
         playhead: Int
     ) {
         durations = newDurations
+        frameStartsMs = IntArray(durations.size + 1)
+        var accumulatedDuration = 0
+        durations.forEachIndexed { index, duration ->
+            frameStartsMs[index] = accumulatedDuration
+            accumulatedDuration += duration
+        }
+        frameStartsMs[durations.size] = accumulatedDuration
         selected = current.coerceIn(0, max(0, durations.lastIndex))
         waveform = newWaveform
         audioDurationMs = audioDuration
@@ -3363,11 +3371,8 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     fun setSelectedFrame(index: Int) {
-        val next = index.coerceIn(0, max(0, durations.lastIndex))
-        if (next != selected) {
-            selected = next
-            invalidateStaticTimeline()
-        }
+        selected = index.coerceIn(0, max(0, durations.lastIndex))
+        // The selected shot is an overlay; cached cards and waveform stay intact.
         invalidate()
     }
 
@@ -3426,6 +3431,7 @@ class TimelineView(context: android.content.Context) : View(context) {
         super.onDraw(canvas)
         ensureStaticTimeline()
         staticTimelineBitmap?.let { canvas.drawBitmap(it, staticTimelineStartX.toFloat(), 0f, null) }
+        drawSelectedFrameHighlight(canvas)
         drawWaveformStatus(canvas)
         drawPlayhead(canvas)
     }
@@ -3456,7 +3462,7 @@ class TimelineView(context: android.content.Context) : View(context) {
             val x = leftMargin + elapsed / 1000f * pixelsPerSecond
             val w = max(55f * density, duration / 1000f * pixelsPerSecond)
             val rect = RectF(x, cardsTop, x + w, cardsTop + cardHeight)
-            paint.color = if (index == selected) Color.rgb(20, 137, 195) else Color.rgb(112, 112, 112)
+            paint.color = Color.rgb(112, 112, 112)
             canvas.drawRect(rect, paint)
             paint.color = Color.WHITE
             paint.textSize = 12f * density
@@ -3474,6 +3480,21 @@ class TimelineView(context: android.content.Context) : View(context) {
                 x + w - handleWidth / 2f + density, cardsTop + cardHeight * 0.72f, paint)
             elapsed += duration
         }
+    }
+
+    private fun drawSelectedFrameHighlight(canvas: Canvas) {
+        if (selected !in durations.indices) return
+        val elapsed = frameStartsMs.getOrElse(selected) { 0 }
+        val duration = durations[selected]
+        val x = leftMargin + elapsed / 1000f * pixelsPerSecond
+        val w = max(55f * density, duration / 1000f * pixelsPerSecond)
+        val rect = RectF(x, cardsTop, x + w, cardsTop + cardHeight)
+        paint.color = Color.rgb(20, 137, 195)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 3f * density
+        canvas.drawRoundRect(rect, 2f * density, 2f * density, paint)
+        paint.style = Paint.Style.FILL
+        canvas.drawRect(x, cardsTop, x + w, cardsTop + 3f * density, paint)
     }
 
     private fun drawWaveform(canvas: Canvas) {
@@ -4570,6 +4591,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidate()
     }
     fun clearProject() {
+        clearPlaybackPreviews()
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
@@ -6005,6 +6027,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     fun loadJson(root: JSONObject, assetDirectory: File? = null, activeFrame: Int = 0) {
+        clearPlaybackPreviews()
         frame = activeFrame.coerceAtLeast(0)
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
