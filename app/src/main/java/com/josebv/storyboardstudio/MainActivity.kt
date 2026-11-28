@@ -4008,7 +4008,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             previewHandler.post {
                 previewJobs.remove(index)
                 if (preview == null) return@post
-                if (generation != previewGeneration || isDetachedFromWindow) {
+                if (generation != previewGeneration || !isAttachedToWindow) {
                     if (!preview.isRecycled) preview.recycle()
                     return@post
                 }
