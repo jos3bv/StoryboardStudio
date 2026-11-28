@@ -3068,7 +3068,7 @@ class MainActivity : Activity() {
                 val total = frameDurations.size.coerceAtLeast(1)
                 frameDurations.indices.forEach { index ->
                     val page = pdf.startPage(PdfDocument.PageInfo.Builder(1920, 1080, index + 1).create())
-                    page.canvas.drawColor(drawing.canvasPaperColor())
+                    page.canvas.drawColor(drawing.canvasPaperColor(index))
                     drawing.drawFrameToCanvas(index, page.canvas)
                     pdf.finishPage(page)
                     progress.update(((index + 1) * 85 / total), "Preparando página ${index + 1} de $total")
@@ -5208,12 +5208,19 @@ class DrawingView(context: android.content.Context) : View(context) {
                     sourcePaint.xfermode = null
                 }
             }
-            c.save()
-            c.translate(selectionTranslateX, selectionTranslateY)
-            c.rotate(selectionRotation, selectionCenterX, selectionCenterY)
-            c.scale(selectionScale, selectionScale, selectionCenterX, selectionCenterY)
-            c.drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-            c.restore()
+            val transformChanged = kotlin.math.abs(selectionTranslateX) > 0.01f ||
+                kotlin.math.abs(selectionTranslateY) > 0.01f ||
+                kotlin.math.abs(selectionRotation) > 0.01f ||
+                kotlin.math.abs(selectionScale - 1f) > 0.001f
+            if (!copySource || transformChanged) {
+                c.save()
+                c.translate(selectionTranslateX, selectionTranslateY)
+                c.rotate(selectionRotation, selectionCenterX, selectionCenterY)
+                c.scale(selectionScale, selectionScale, selectionCenterX, selectionCenterY)
+                c.drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top,
+                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                c.restore()
+            }
             selectedPixels = null
             pixels.recycle()
             selectionOriginalBitmap?.recycle(); selectionOriginalBitmap = null
@@ -6072,7 +6079,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun writeFramePngEntries(zip: ZipOutputStream) {
         val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
-            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys).toSet().sorted()
+            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys + framePaperColors.keys).toSet().sorted()
         indices.forEach { index ->
             bakeLegacyFrame(index)
             zip.putNextEntry(ZipEntry("frames/frame_" + index + ".png"))
