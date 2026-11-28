@@ -4472,6 +4472,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun releaseCachedBitmaps(clearUndoHistory: Boolean = false, releaseActive: Boolean = true) {
         if (releaseActive) {
+            cancelSelection()
             spillInactiveFrameBitmaps(-1)
             frameBitmaps.keys.toList().forEach { spillFrameBitmap(it) }
             spillInactiveBackgroundFrameBitmaps(-1)
@@ -4633,6 +4634,8 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
     fun clearProject() {
         clearPlaybackPreviews()
+        // Restore/dispose any floating lasso selection before deleting the source frame.
+        cancelSelection()
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         frameBitmaps.clear()
@@ -4660,7 +4663,6 @@ class DrawingView(context: android.content.Context) : View(context) {
         inProgressBounds = null
         inProgressLastPoint = null
         inProgressCanvas?.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        cancelSelection()
         invalidate()
         onChanged?.invoke()
     }
@@ -6122,6 +6124,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun loadJson(root: JSONObject, assetDirectory: File? = null, activeFrame: Int = 0) {
         clearPlaybackPreviews()
+        cancelSelection()
         frame = activeFrame.coerceAtLeast(0)
         frames.clear()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
