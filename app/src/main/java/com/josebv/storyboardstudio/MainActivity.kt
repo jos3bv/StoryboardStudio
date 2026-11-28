@@ -4693,7 +4693,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val pixelX = kotlin.math.floor(point.x).toInt().coerceIn(0, 1919)
         val pixelY = kotlin.math.floor(point.y).toInt().coerceIn(0, 1079)
         bakeLegacyFrame(frame)
-        var result = paperColor
+        var result = canvasPaperColor(frame)
         backgroundBitmapFor(frame, createIfMissing = false)?.let { layer ->
             result = compositeSourceOver(layer.getPixel(pixelX, pixelY), result)
         }
