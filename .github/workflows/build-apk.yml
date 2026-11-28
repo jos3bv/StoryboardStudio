@@ -15,6 +15,7 @@ on:
       - feature/undo-playback-optimization-0.9.81
       - feature/ui-lasso-export-paper-0.9.82
       - feature/timeline-zoom-follow-0.9.83
+      - feature/timeline-zoom-ui-0.9.84
 
 permissions:
   contents: read
@@ -69,7 +70,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BV-Storyboarder-0.9.83-debug
+          name: BV-Storyboarder-0.9.84-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
