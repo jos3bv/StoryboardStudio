@@ -1745,7 +1745,8 @@ class MainActivity : Activity() {
                 pending.future.get()
                 commitStoredStrokePatch(pending.patch)
             } catch (error: Exception) {
-                pending.patch.file.delete()
+                pending.patch.beforeFile.delete()
+                pending.patch.afterFile.delete()
                 setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
             }
         }
@@ -1758,7 +1759,8 @@ class MainActivity : Activity() {
                 pending.future.get()
                 commitStoredStrokePatch(pending.patch)
             } catch (error: Exception) {
-                pending.patch.file.delete()
+                pending.patch.beforeFile.delete()
+                pending.patch.afterFile.delete()
                 setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
             }
         }
