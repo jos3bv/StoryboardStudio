@@ -1658,6 +1658,7 @@ class MainActivity : Activity() {
 
     private fun updateFrameStatus() {
         if (!::status.isInitialized) return
+        if (::drawing.isInitialized) updatePaperColorIndicator()
         val duration = frameDurations.getOrElse(currentFrame) { 3000 }
         if (::projectTitleLabel.isInitialized) projectTitleLabel.text = projectName
         if (::timelineView.isInitialized) timelineView.projectLabel = projectName
