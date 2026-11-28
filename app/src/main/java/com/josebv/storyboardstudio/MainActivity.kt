@@ -640,7 +640,7 @@ class MainActivity : Activity() {
             }
             contentDescription = "Color seleccionado"
         }
-        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(14)).apply {
+        sideContent.addView(selectedColorIndicator, LinearLayout.LayoutParams(-1, dp(24)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             setMargins(0, dp(1), 0, dp(2))
         })
@@ -682,7 +682,7 @@ class MainActivity : Activity() {
                 cornerRadius = dp(3).toFloat()
             }
         }
-        paperColorRow.addView(paperColorIndicator, LinearLayout.LayoutParams(dp(30), dp(28)))
+        paperColorRow.addView(paperColorIndicator, LinearLayout.LayoutParams(dp(60), dp(28)))
         swatchWrap.addView(paperColorRow, LinearLayout.LayoutParams(-1, dp(36)))
         swatchWrap.addView(recentColorContainer, LinearLayout.LayoutParams(-1, dp(16)))
         val grayRow = LinearLayout(this).apply {
@@ -710,7 +710,7 @@ class MainActivity : Activity() {
             // Taller paper-color control; recent colors and grayscale swatches remain compact.
             setMargins(0, 0, 0, dp(4))
         })
-        sideContent.addView(View(this), LinearLayout.LayoutParams(-1, 0, 0.5f))
+        sideContent.addView(View(this), LinearLayout.LayoutParams(-1, 0, 0.25f))
         refreshRecentColorSwatches()
         updatePaperColorIndicator()
 
@@ -1125,8 +1125,18 @@ class MainActivity : Activity() {
         timelineZoomSeek = SeekBar(this).apply {
             max = 100
             progress = 35
-            setOnSeekBarChangeListener(simpleSeekListener {
-                timelineView.setZoomProgress(progress)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (fromUser) timelineView.setZoomProgress(progress)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                    timelineView.beginZoomInteraction()
+                }
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    timelineView.endZoomInteraction()
+                }
             })
         }
         zoomGroup.addView(timelineZoomSeek, LinearLayout.LayoutParams(0, dp(24), 1f).apply {
@@ -3256,9 +3266,14 @@ class TimelineView(context: android.content.Context) : View(context) {
     private val handleWidth = 13f * density
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var zoomAnchorScreenX: Float? = null
+    private var pendingZoomAnchorScreenX: Float? = null
+    private var zoomPreDrawListener: android.view.ViewTreeObserver.OnPreDrawListener? = null
+
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             gestureMode = GestureMode.NONE
+            beginZoomInteraction()
             this@TimelineView.parent?.requestDisallowInterceptTouchEvent(true)
             return true
         }
@@ -3269,6 +3284,7 @@ class TimelineView(context: android.content.Context) : View(context) {
         }
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
+            endZoomInteraction()
             this@TimelineView.parent?.requestDisallowInterceptTouchEvent(false)
         }
     })
@@ -3377,28 +3393,57 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
+    fun beginZoomInteraction() {
+        val scroll = parent as? HorizontalScrollView
+        val scrollX = scroll?.scrollX ?: 0
+        zoomAnchorScreenX = leftMargin + playheadMs / 1000f * pixelsPerSecond - scrollX
+    }
+
+    fun endZoomInteraction() {
+        zoomAnchorScreenX = null
+    }
+
     private fun applyZoomScale(requestedScale: Float) {
         val nextScale = requestedScale.coerceIn(8f, 420f)
-        val oldScale = pixelsPerSecond
-        if (abs(nextScale - oldScale) < 0.001f) return
+        if (abs(nextScale - pixelsPerSecond) < 0.001f) return
 
         val scroll = parent as? HorizontalScrollView
-        val oldScrollX = scroll?.scrollX ?: 0
-        // Keep the playhead at the same screen coordinate while the timeline scale changes.
-        val playheadScreenX = leftMargin + playheadMs / 1000f * oldScale - oldScrollX
+        val anchorScreenX = zoomAnchorScreenX ?:
+            (leftMargin + playheadMs / 1000f * pixelsPerSecond - (scroll?.scrollX ?: 0))
 
         pixelsPerSecond = nextScale
-        invalidateStaticTimeline()
+        // Keep the previous cache until the new width has been measured. The pre-draw
+        // callback then restores the playhead anchor and invalidates the cache exactly once.
         requestLayout()
         invalidate()
 
-        if (scroll != null) {
-            post {
-                val newPlayheadContentX = leftMargin + playheadMs / 1000f * pixelsPerSecond
-                val targetScrollX = (newPlayheadContentX - playheadScreenX).roundToInt()
-                scroll.scrollTo(targetScrollX.coerceAtLeast(0), 0)
-                notifyViewportChanged()
+        pendingZoomAnchorScreenX = anchorScreenX
+        if (zoomPreDrawListener == null) {
+            val listener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (viewTreeObserver.isAlive) {
+                        viewTreeObserver.removeOnPreDrawListener(this)
+                    }
+                    zoomPreDrawListener = null
+
+                    val anchor = pendingZoomAnchorScreenX
+                    pendingZoomAnchorScreenX = null
+                    val currentScroll = parent as? HorizontalScrollView
+                    if (anchor != null && currentScroll != null) {
+                        val headContentX = leftMargin + playheadMs / 1000f * pixelsPerSecond
+                        val maxScrollX = (width - currentScroll.width).coerceAtLeast(0)
+                        val targetScrollX = (headContentX - anchor).roundToInt().coerceIn(0, maxScrollX)
+                        if (currentScroll.scrollX != targetScrollX) {
+                            currentScroll.scrollTo(targetScrollX, 0)
+                        }
+                    }
+                    invalidateStaticTimeline()
+                    postInvalidateOnAnimation()
+                    return true
+                }
             }
+            zoomPreDrawListener = listener
+            viewTreeObserver.addOnPreDrawListener(listener)
         }
     }
 
