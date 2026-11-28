@@ -12,6 +12,7 @@ on:
       - feature/eyedropper-0.9.78
       - feature/stylus-pointer-stability-0.9.79
       - feature/async-stroke-history-0.9.80
+      - feature/undo-playback-optimization-0.9.81
 
 permissions:
   contents: read
@@ -66,7 +67,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BV-Storyboarder-0.9.80-debug
+          name: BV-Storyboarder-0.9.81-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
