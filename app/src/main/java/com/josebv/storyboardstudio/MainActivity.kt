@@ -60,7 +60,8 @@ data class StrokeHistoryPatch(
     val background: Boolean,
     val left: Int,
     val top: Int,
-    val bitmap: Bitmap
+    val beforeBitmap: Bitmap,
+    val afterBitmap: Bitmap
 )
 
 data class StoredStrokeHistoryPatch(
@@ -68,12 +69,19 @@ data class StoredStrokeHistoryPatch(
     val background: Boolean,
     val left: Int,
     val top: Int,
-    val file: File
+    val beforeFile: File,
+    val afterFile: File
+)
+
+private data class HistoryPatchNode(
+    val patch: StoredStrokeHistoryPatch,
+    val previous: HistoryPatchNode?
 )
 
 private data class HistoryCheckpoint(
     val baseFile: File,
-    val patches: List<StoredStrokeHistoryPatch>
+    val patchTail: HistoryPatchNode?,
+    val lastStrokePatch: StoredStrokeHistoryPatch?
 )
 
 class MainActivity : Activity() {
@@ -191,21 +199,39 @@ class MainActivity : Activity() {
 
     private fun cleanupHistoryFiles() {
         val retained = mutableSetOf<String>()
+        fun retainPatch(patch: StoredStrokeHistoryPatch) {
+            retained.add(patch.beforeFile.absolutePath)
+            retained.add(patch.afterFile.absolutePath)
+            retained.add(patch.beforeFile.absolutePath + ".writing")
+            retained.add(patch.afterFile.absolutePath + ".writing")
+        }
         fun retain(checkpoint: HistoryCheckpoint?) {
             if (checkpoint == null) return
             retained.add(checkpoint.baseFile.absolutePath)
-            checkpoint.patches.forEach { retained.add(it.file.absolutePath) }
+            var node = checkpoint.patchTail
+            while (node != null) {
+                retainPatch(node.patch)
+                node = node.previous
+            }
         }
         retain(lastHistoryCheckpoint)
         undoHistory.forEach { retain(it) }
         redoHistory.forEach { retain(it) }
-        pendingStrokeHistory.forEach {
-            retained.add(it.patch.file.absolutePath)
-            retained.add(it.patch.file.absolutePath + ".writing")
-        }
+        pendingStrokeHistory.forEach { retainPatch(it.patch) }
         historyDirectory.listFiles()?.forEach { file ->
             if (file.absolutePath !in retained) file.delete()
         }
+    }
+
+    private fun historyPatches(checkpoint: HistoryCheckpoint): List<StoredStrokeHistoryPatch> {
+        val result = mutableListOf<StoredStrokeHistoryPatch>()
+        var node = checkpoint.patchTail
+        while (node != null) {
+            result.add(node.patch)
+            node = node.previous
+        }
+        result.reverse()
+        return result
     }
 
     private fun clearStaleHistoryFiles() {
@@ -390,7 +416,7 @@ class MainActivity : Activity() {
             val frame = if (bounded >= totalDuration()) frameDurations.lastIndex else frameAtTime(bounded)
             if (frame != currentFrame && frame in frameDurations.indices) {
                 currentFrame = frame
-                drawing.setFrame(frame)
+                drawing.setPlaybackPreviewFrame(frame, playbackPrefetchIndices(frame))
                 updateFrameStatus()
                 timelineView.setSelectedFrame(frame)
             }
@@ -482,9 +508,11 @@ class MainActivity : Activity() {
     private fun buildInterface() {
         drawing = DrawingView(this).apply {
             onChanged = {
+                drawing.invalidatePlaybackPreview(drawing.currentFrameIndex())
                 scheduleAutosave()
             }
             onHistoryAction = {
+                drawing.clearPlaybackPreviews()
                 if (!restoringHistory) scheduleHistoryRecord()
             }
             onStrokeCommitted = { patch -> enqueueStrokeHistory(patch) }
@@ -1642,33 +1670,50 @@ class MainActivity : Activity() {
             try { sessionFile.copyTo(baseline, overwrite = true) }
             catch (_: Exception) { storeHistoryState() }
         } else storeHistoryState()
-        lastHistoryCheckpoint = HistoryCheckpoint(base, emptyList())
+        lastHistoryCheckpoint = HistoryCheckpoint(base, null, null)
     }
 
     private fun enqueueStrokeHistory(patch: StrokeHistoryPatch) {
         if (restoringHistory) {
-            if (!patch.bitmap.isRecycled) patch.bitmap.recycle()
+            if (!patch.beforeBitmap.isRecycled) patch.beforeBitmap.recycle()
+            if (!patch.afterBitmap.isRecycled) patch.afterBitmap.recycle()
             return
         }
         if (!historyDirectory.exists()) historyDirectory.mkdirs()
-        val file = File(historyDirectory, "stroke_patch_${historyFileCounter++}.png")
-        val stored = StoredStrokeHistoryPatch(patch.frame, patch.background, patch.left, patch.top, file)
+        val id = historyFileCounter++
+        val beforeFile = File(historyDirectory, "stroke_${id}_before.png")
+        val afterFile = File(historyDirectory, "stroke_${id}_after.png")
+        val stored = StoredStrokeHistoryPatch(
+            patch.frame, patch.background, patch.left, patch.top, beforeFile, afterFile
+        )
         val future = historyExecutor.submit {
-            val temp = File(file.parentFile, file.name + ".writing")
+            val beforeTemp = File(beforeFile.parentFile, beforeFile.name + ".writing")
+            val afterTemp = File(afterFile.parentFile, afterFile.name + ".writing")
             try {
-                FileOutputStream(temp).use { output ->
-                    if (!patch.bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
-                        throw java.io.IOException("No se pudo guardar el trazo en el historial")
+                FileOutputStream(beforeTemp).use { output ->
+                    if (!patch.beforeBitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                        throw java.io.IOException("No se pudo guardar el estado anterior del trazo")
                     }
                     output.flush()
                 }
-                if (!temp.renameTo(file)) throw java.io.IOException("No se pudo finalizar el historial del trazo")
+                FileOutputStream(afterTemp).use { output ->
+                    if (!patch.afterBitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                        throw java.io.IOException("No se pudo guardar el estado posterior del trazo")
+                    }
+                    output.flush()
+                }
+                if (!beforeTemp.renameTo(beforeFile) || !afterTemp.renameTo(afterFile)) {
+                    throw java.io.IOException("No se pudieron finalizar los datos del trazo")
+                }
             } catch (error: Exception) {
-                temp.delete()
-                file.delete()
+                beforeTemp.delete()
+                afterTemp.delete()
+                beforeFile.delete()
+                afterFile.delete()
                 throw error
             } finally {
-                if (!patch.bitmap.isRecycled) patch.bitmap.recycle()
+                if (!patch.beforeBitmap.isRecycled) patch.beforeBitmap.recycle()
+                if (!patch.afterBitmap.isRecycled) patch.afterBitmap.recycle()
                 handler.post { commitCompletedStrokeHistory() }
             }
         }
@@ -1676,15 +1721,18 @@ class MainActivity : Activity() {
     }
 
     private fun commitStoredStrokePatch(patch: StoredStrokeHistoryPatch) {
-        val previous = lastHistoryCheckpoint ?: return
+        val previous = lastHistoryCheckpoint ?: run {
+            patch.beforeFile.delete()
+            patch.afterFile.delete()
+            return
+        }
         val discardedRedo = redoHistory.isNotEmpty()
         undoHistory.addLast(previous)
         trimHistory(undoHistory)
         clearHistoryFiles(redoHistory)
-        lastHistoryCheckpoint = HistoryCheckpoint(previous.baseFile, previous.patches + patch)
-        // Scanning every retained patch after every stroke would itself become
-        // progressively more expensive. Reclaim orphaned files only when a redo
-        // branch is discarded; normal stroke commits only append one small record.
+        // Persistent linked nodes make each stroke commit O(1).
+        val node = HistoryPatchNode(patch, previous.patchTail)
+        lastHistoryCheckpoint = HistoryCheckpoint(previous.baseFile, node, patch)
         if (discardedRedo) cleanupHistoryFiles()
     }
 
@@ -1714,7 +1762,6 @@ class MainActivity : Activity() {
                 setStatus("No se pudo registrar un trazo en Deshacer: ${error.cause?.message ?: error.message}")
             }
         }
-        cleanupHistoryFiles()
     }
 
     private fun recordHistory() {
@@ -1730,7 +1777,7 @@ class MainActivity : Activity() {
             trimHistory(undoHistory)
         }
         clearHistoryFiles(redoHistory)
-        lastHistoryCheckpoint = HistoryCheckpoint(next, emptyList())
+        lastHistoryCheckpoint = HistoryCheckpoint(next, null, null)
         cleanupHistoryFiles()
     }
 
@@ -1768,7 +1815,7 @@ class MainActivity : Activity() {
             currentFrame = currentFrame.coerceIn(0, frameDurations.lastIndex)
             drawing.loadJson(snapshot.optJSONObject("drawing") ?: JSONObject(), File(extracted, "frames"), currentFrame)
             adoptSessionAssets(File(extracted, "frames"))
-            drawing.applyHistoryPatches(checkpoint.patches)
+            drawing.applyHistoryPatches(historyPatches(checkpoint))
             drawing.restoreToolSettings(preservedToolSettings)
             drawing.setActiveTool(preservedActiveTool)
             refreshActiveToolControls()
@@ -1789,12 +1836,20 @@ class MainActivity : Activity() {
         val previous = undoHistory.last()
         val current = lastHistoryCheckpoint ?: return
         try {
-            restoreHistoryState(previous)
+            val strokePatch = current.lastStrokePatch
+            val directStrokeStep = strokePatch != null &&
+                current.baseFile == previous.baseFile &&
+                current.patchTail?.previous === previous.patchTail
+            if (directStrokeStep) {
+                drawing.applyHistoryPatch(strokePatch!!, useAfter = false)
+            } else {
+                restoreHistoryState(previous)
+            }
             undoHistory.removeLast()
             redoHistory.addLast(current)
             trimHistory(redoHistory)
             lastHistoryCheckpoint = previous
-            cleanupHistoryFiles()
+            if (!directStrokeStep) cleanupHistoryFiles()
         } catch (e: Exception) {
             setStatus("No se pudo recuperar el historial: ${e.message}")
         }
@@ -1806,12 +1861,20 @@ class MainActivity : Activity() {
         val next = redoHistory.last()
         val current = lastHistoryCheckpoint ?: return
         try {
-            restoreHistoryState(next)
+            val strokePatch = next.lastStrokePatch
+            val directStrokeStep = strokePatch != null &&
+                next.baseFile == current.baseFile &&
+                next.patchTail?.previous === current.patchTail
+            if (directStrokeStep) {
+                drawing.applyHistoryPatch(strokePatch!!, useAfter = true)
+            } else {
+                restoreHistoryState(next)
+            }
             redoHistory.removeLast()
             undoHistory.addLast(current)
             trimHistory(undoHistory)
             lastHistoryCheckpoint = next
-            cleanupHistoryFiles()
+            if (!directStrokeStep) cleanupHistoryFiles()
         } catch (e: Exception) {
             setStatus("No se pudo recuperar el historial: ${e.message}")
         }
@@ -2489,12 +2552,19 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun playbackPrefetchIndices(index: Int): List<Int> {
+        if (frameDurations.isEmpty()) return emptyList()
+        val end = min(frameDurations.lastIndex, index + 5)
+        return if (index < end) (index + 1..end).toList() else emptyList()
+    }
+
     private fun toggleAudio() {
         val player = mediaPlayer
         if (player?.isPlaying == true || sequencePlaying) {
             stopPlayback()
             return
         }
+        drawing.startPlaybackPreview(currentFrame, playbackPrefetchIndices(currentFrame))
         if (player != null && audioDurationMs > 0) {
             val start = frameStartTime(currentFrame).coerceAtMost(audioDurationMs)
             if (player.currentPosition < start || player.currentPosition >= player.duration) {
@@ -2518,6 +2588,7 @@ class MainActivity : Activity() {
         mediaPlayer?.takeIf { it.isPlaying }?.pause()
         sequencePlaying = false
         handler.removeCallbacks(playbackUpdater)
+        if (::drawing.isInitialized) drawing.stopPlaybackPreview(currentFrame)
         if (::playPauseButton.isInitialized) setButtonIcon(playPauseButton, "ic_play", 28)
     }
 
@@ -3100,6 +3171,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacks(autosaveRunnable)
+        if (::drawing.isInitialized) drawing.shutdownPlaybackPreviews()
         handler.removeCallbacks(pendingHistoryRunnable)
         if (::drawing.isInitialized) drawing.releaseCachedBitmaps(clearUndoHistory = true)
         clearHistoryFiles(undoHistory)
@@ -3131,7 +3203,16 @@ class TimelineView(context: android.content.Context) : View(context) {
     var splitMode: Boolean = false
     var onRequestAudio: (() -> Unit)? = null
     var projectLabel: String = "Mi storyboard"
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidateStaticTimeline()
+                invalidate()
+            }
+        }
 
+    private var staticTimelineBitmap: Bitmap? = null
+    private var audioPlaceholderBitmap: Bitmap? = null
     private var durations = listOf(3000)
     private var selected = 0
     private var waveform = FloatArray(0)
@@ -3199,6 +3280,31 @@ class TimelineView(context: android.content.Context) : View(context) {
 
     private enum class GestureMode { NONE, RESIZE, MOVE, SCRUB, AUDIO_PENDING, PAN_AUDIO }
 
+    private fun invalidateStaticTimeline() {
+        staticTimelineBitmap?.let { if (!it.isRecycled) it.recycle() }
+        staticTimelineBitmap = null
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        invalidateStaticTimeline()
+    }
+
+    private fun ensureStaticTimeline() {
+        if (width <= 0 || height <= 0) return
+        val existing = staticTimelineBitmap
+        if (existing != null && !existing.isRecycled &&
+            existing.width == width && existing.height == height) return
+        invalidateStaticTimeline()
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val staticCanvas = Canvas(bitmap)
+        staticCanvas.drawColor(Color.rgb(25, 29, 35))
+        drawRuler(staticCanvas)
+        drawCards(staticCanvas)
+        drawWaveform(staticCanvas)
+        staticTimelineBitmap = bitmap
+    }
+
     fun setData(
         newDurations: List<Int>,
         current: Int,
@@ -3211,12 +3317,14 @@ class TimelineView(context: android.content.Context) : View(context) {
         waveform = newWaveform
         audioDurationMs = audioDuration
         playheadMs = playhead
+        invalidateStaticTimeline()
         requestLayout()
         invalidate()
     }
 
     fun setAudioLoading(loading: Boolean) {
         audioLoading = loading
+        invalidateStaticTimeline()
         invalidate()
     }
 
@@ -3226,12 +3334,17 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     fun setSelectedFrame(index: Int) {
-        selected = index.coerceIn(0, max(0, durations.lastIndex))
+        val next = index.coerceIn(0, max(0, durations.lastIndex))
+        if (next != selected) {
+            selected = next
+            invalidateStaticTimeline()
+        }
         invalidate()
     }
 
     fun changeZoom(factor: Float): Int {
         pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(8f, 420f)
+        invalidateStaticTimeline()
         requestLayout()
         invalidate()
         return (((pixelsPerSecond - 8f) / (420f - 8f)) * 100f).toInt().coerceIn(0, 100)
@@ -3243,6 +3356,7 @@ class TimelineView(context: android.content.Context) : View(context) {
         val totalSeconds = max(durations.sum(), audioDurationMs).coerceAtLeast(1) / 1000f
         pixelsPerSecond = (viewport / totalSeconds).coerceIn(8f, 420f)
         val progress = (((pixelsPerSecond - 8f) / (420f - 8f)) * 100f).toInt().coerceIn(0, 100)
+        invalidateStaticTimeline()
         requestLayout()
         invalidate()
         scroll?.post { scroll.scrollTo(0, 0) }
@@ -3252,12 +3366,14 @@ class TimelineView(context: android.content.Context) : View(context) {
     fun setZoomProgress(progress: Int) {
         pixelsPerSecond = (8f + (progress.coerceIn(0, 100) / 100f) * (420f - 8f))
             .coerceIn(8f, 420f)
+        invalidateStaticTimeline()
         requestLayout()
         invalidate()
     }
 
     fun setZoomLevel(level: Float) {
         pixelsPerSecond = (85f * level).coerceIn(8f, 420f)
+        invalidateStaticTimeline()
         requestLayout()
         invalidate()
     }
@@ -3279,10 +3395,9 @@ class TimelineView(context: android.content.Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(Color.rgb(25, 29, 35))
-        drawRuler(canvas)
-        drawCards(canvas)
-        drawWaveform(canvas)
+        ensureStaticTimeline()
+        staticTimelineBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        drawWaveformStatus(canvas)
         drawPlayhead(canvas)
     }
 
@@ -3339,13 +3454,6 @@ class TimelineView(context: android.content.Context) : View(context) {
         paint.color = Color.rgb(43, 83, 47)
         canvas.drawRect(lane, paint)
 
-        // Waveform data scrolls with time; track labels and status graphics stay in the viewport.
-        val scroll = parent as? HorizontalScrollView
-        val viewportLeft = (scroll?.scrollX ?: 0).toFloat()
-        val viewportWidth = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
-        val viewportCenter = viewportLeft + viewportWidth / 2f
-        val viewportRight = viewportLeft + viewportWidth
-
         if (waveform.isNotEmpty() && audioDurationMs > 0) {
             paint.color = Color.rgb(139, 185, 151)
             val center = audioTop + audioHeight / 2f
@@ -3357,6 +3465,14 @@ class TimelineView(context: android.content.Context) : View(context) {
                     x + max(1f, step * 0.68f), center + barHeight / 2f, paint)
             }
         }
+    }
+
+    private fun drawWaveformStatus(canvas: Canvas) {
+        val scroll = parent as? HorizontalScrollView
+        val viewportLeft = (scroll?.scrollX ?: 0).toFloat()
+        val viewportWidth = (scroll?.width ?: width).toFloat().coerceAtLeast(1f)
+        val viewportCenter = viewportLeft + viewportWidth / 2f
+        val viewportRight = viewportLeft + viewportWidth
 
         if (audioLoading) {
             paint.textSize = 11f * density
@@ -3383,19 +3499,18 @@ class TimelineView(context: android.content.Context) : View(context) {
                 audioTop + audioHeight / 2f + 4f * density, paint)
             paint.textAlign = Paint.Align.LEFT
         } else if (audioDurationMs <= 0) {
-            val audioId = resources.getIdentifier("ic_load_audio", "drawable", context.packageName)
-            if (audioId != 0) {
-                val bitmap = BitmapFactory.decodeResource(resources, audioId)
-                if (bitmap != null) {
-                    val targetW = 104f * density
-                    val targetH = targetW * bitmap.height / bitmap.width
-                    val dst = RectF(viewportCenter - targetW / 2f,
-                        audioTop + audioHeight / 2f - targetH / 2f,
-                        viewportCenter + targetW / 2f,
-                        audioTop + audioHeight / 2f + targetH / 2f)
-                    canvas.drawBitmap(bitmap, null, dst, paint)
-                    bitmap.recycle()
-                }
+            if (audioPlaceholderBitmap == null) {
+                val audioId = resources.getIdentifier("ic_load_audio", "drawable", context.packageName)
+                if (audioId != 0) audioPlaceholderBitmap = BitmapFactory.decodeResource(resources, audioId)
+            }
+            audioPlaceholderBitmap?.let { bitmap ->
+                val targetW = 104f * density
+                val targetH = targetW * bitmap.height / bitmap.width
+                val dst = RectF(viewportCenter - targetW / 2f,
+                    audioTop + audioHeight / 2f - targetH / 2f,
+                    viewportCenter + targetW / 2f,
+                    audioTop + audioHeight / 2f + targetH / 2f)
+                canvas.drawBitmap(bitmap, null, dst, paint)
             }
         }
     }
@@ -3771,10 +3886,186 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val backgroundFrameBitmapFiles = mutableMapOf<Int, File>()
     private val backgroundFrameBitmapDirectory = File(context.filesDir, "storyboard_background_cache").apply { mkdirs() }
 
+    private data class PlaybackPreviewSource(
+        val foregroundScaled: Bitmap?,
+        val foregroundFile: File?,
+        val backgroundScaled: Bitmap?,
+        val backgroundFile: File?,
+        val paperColor: Int,
+        val note: String?,
+        val noteColor: Int
+    )
+
+    private val previewHandler = Handler(Looper.getMainLooper())
+    private val previewExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "StoryboardPreview").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }
+    }
+    private val playbackPreviews = LinkedHashMap<Int, Bitmap>(6, 0.75f, true)
+    private val previewJobs = mutableSetOf<Int>()
+    private var previewGeneration = 0
+    private var playbackPreviewActive = false
+    private var playbackPreviewFrame = -1
+    private var playbackPreviewBitmap: Bitmap? = null
+    private val playbackPreviewWidth = 960
+    private val playbackPreviewHeight = 540
+
     init {
         frameBitmapDirectory.listFiles()?.forEach { it.delete() }
         backgroundFrameBitmapDirectory.listFiles()?.forEach { it.delete() }
         setBackgroundColor(Color.TRANSPARENT)
+    }
+
+    private fun scaledPlaybackLayer(bitmap: Bitmap?): Bitmap? {
+        if (bitmap == null || bitmap.isRecycled) return null
+        return Bitmap.createScaledBitmap(bitmap, playbackPreviewWidth, playbackPreviewHeight, true)
+    }
+
+    private fun buildPlaybackPreviewSource(index: Int): PlaybackPreviewSource {
+        if (frames[index]?.isNotEmpty() == true || importedImages[index] != null) bakeLegacyFrame(index)
+        val foregroundMemory = frameBitmaps[index]?.takeIf { !it.isRecycled }
+        val backgroundMemory = backgroundFrameBitmaps[index]?.takeIf { !it.isRecycled }
+        return PlaybackPreviewSource(
+            foregroundScaled = scaledPlaybackLayer(foregroundMemory),
+            foregroundFile = if (foregroundMemory == null) frameBitmapFiles[index] else null,
+            backgroundScaled = scaledPlaybackLayer(backgroundMemory),
+            backgroundFile = if (backgroundMemory == null) backgroundFrameBitmapFiles[index] else null,
+            paperColor = paperColor,
+            note = notes[index]?.firstOrNull(),
+            noteColor = noteColors[index] ?: Color.RED
+        )
+    }
+
+    private fun decodePlaybackLayer(file: File?): Bitmap? {
+        if (file == null || !file.isFile || file.length() <= 0L) return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = 2
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
+
+    private fun renderPlaybackPreview(source: PlaybackPreviewSource): Bitmap {
+        val result = Bitmap.createBitmap(playbackPreviewWidth, playbackPreviewHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        canvas.drawColor(source.paperColor)
+        var decodedBackground: Bitmap? = null
+        var decodedForeground: Bitmap? = null
+        try {
+            val background = source.backgroundScaled ?: decodePlaybackLayer(source.backgroundFile).also {
+                decodedBackground = it
+            }
+            val foreground = source.foregroundScaled ?: decodePlaybackLayer(source.foregroundFile).also {
+                decodedForeground = it
+            }
+            val destination = Rect(0, 0, playbackPreviewWidth, playbackPreviewHeight)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            background?.let { canvas.drawBitmap(it, null, destination, paint) }
+            foreground?.let { canvas.drawBitmap(it, null, destination, paint) }
+            source.note?.takeIf { it.isNotBlank() }?.let { note ->
+                paint.color = source.noteColor
+                paint.textSize = 17f
+                paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                canvas.drawText(note, 12f, playbackPreviewHeight - 12f, paint)
+            }
+        } catch (error: Exception) {
+            result.recycle()
+            throw error
+        } finally {
+            source.foregroundScaled?.takeIf { !it.isRecycled }?.recycle()
+            source.backgroundScaled?.takeIf { !it.isRecycled }?.recycle()
+            decodedBackground?.takeIf { !it.isRecycled }?.recycle()
+            decodedForeground?.takeIf { !it.isRecycled }?.recycle()
+        }
+        return result
+    }
+
+    private fun cachePlaybackPreview(index: Int, bitmap: Bitmap) {
+        playbackPreviews.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+        playbackPreviews[index] = bitmap
+        while (playbackPreviews.size > 6) {
+            val iterator = playbackPreviews.entries.iterator()
+            if (!iterator.hasNext()) break
+            val entry = iterator.next()
+            iterator.remove()
+            if (!entry.value.isRecycled) entry.value.recycle()
+        }
+    }
+
+    private fun requestPlaybackPreview(index: Int) {
+        if (playbackPreviews.containsKey(index) || !previewJobs.add(index)) return
+        val source = try {
+            buildPlaybackPreviewSource(index)
+        } catch (_: Exception) {
+            previewJobs.remove(index)
+            return
+        }
+        val generation = previewGeneration
+        previewExecutor.execute {
+            val preview = try { renderPlaybackPreview(source) } catch (_: Exception) { null }
+            previewHandler.post {
+                previewJobs.remove(index)
+                if (preview == null) return@post
+                if (generation != previewGeneration || isDetachedFromWindow) {
+                    if (!preview.isRecycled) preview.recycle()
+                    return@post
+                }
+                cachePlaybackPreview(index, preview)
+                if (playbackPreviewActive && playbackPreviewFrame == index) {
+                    playbackPreviewBitmap = playbackPreviews[index]
+                    invalidate()
+                }
+            }
+        }
+    }
+
+    fun startPlaybackPreview(index: Int, prefetchIndices: List<Int>) {
+        playbackPreviewActive = true
+        setPlaybackPreviewFrame(index, prefetchIndices)
+    }
+
+    fun setPlaybackPreviewFrame(index: Int, prefetchIndices: List<Int>) {
+        playbackPreviewActive = true
+        playbackPreviewFrame = index
+        playbackPreviews[index]?.let { playbackPreviewBitmap = it }
+            ?: requestPlaybackPreview(index)
+        prefetchIndices.forEach { requestPlaybackPreview(it) }
+        invalidate()
+    }
+
+    fun stopPlaybackPreview(index: Int) {
+        if (!playbackPreviewActive) return
+        playbackPreviewActive = false
+        playbackPreviewFrame = -1
+        playbackPreviewBitmap = null
+        setFrame(index)
+        invalidate()
+    }
+
+    fun invalidatePlaybackPreview(index: Int) {
+        playbackPreviews.remove(index)?.let { if (!it.isRecycled) it.recycle() }
+        if (playbackPreviewFrame == index) playbackPreviewBitmap = null
+        previewGeneration++
+        previewJobs.clear()
+        invalidate()
+    }
+
+    fun clearPlaybackPreviews() {
+        playbackPreviewActive = false
+        playbackPreviewFrame = -1
+        playbackPreviewBitmap = null
+        previewGeneration++
+        previewJobs.clear()
+        playbackPreviews.values.forEach { if (!it.isRecycled) it.recycle() }
+        playbackPreviews.clear()
+        invalidate()
+    }
+
+    fun shutdownPlaybackPreviews() {
+        clearPlaybackPreviews()
+        previewExecutor.shutdownNow()
     }
 
     private fun frameFile(index: Int): File {
@@ -3990,6 +4281,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private val notes = mutableMapOf<Int, MutableList<String>>()
     private val noteColors = mutableMapOf<Int, Int>()
     private var frame = 0
+    fun currentFrameIndex(): Int = frame
     private var current: Stroke? = null
     private data class BrushSettings(var size: Float, var color: Int, var opacity: Int)
     private val pencilSettings = BrushSettings(4f, Color.BLACK, 255)
@@ -4655,6 +4947,17 @@ class DrawingView(context: android.content.Context) : View(context) {
         canvas.translate(left, top)
         canvas.scale(boardScale / 120f, boardScale / 120f)
         val boardBounds = RectF(0f, 0f, 1920f, 1080f)
+        // Playback uses a reduced composite; editable bitmaps remain untouched until stop.
+        val playbackImage = playbackPreviewBitmap
+        if (playbackPreviewActive && playbackImage != null && !playbackImage.isRecycled) {
+            canvas.drawBitmap(
+                playbackImage, null, boardBounds,
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            )
+            canvas.restore()
+            canvas.restore()
+            return
+        }
         // The editable bitmap stays transparent; the paper color is composited underneath.
         canvas.drawRect(boardBounds, Paint().apply { color = paperColor; style = Paint.Style.FILL })
         // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
@@ -5183,11 +5486,8 @@ class DrawingView(context: android.content.Context) : View(context) {
             } else {
                 bitmapFor(frame)
             }
-            // Commit the same in-progress surface used by the live preview.
-            commitInProgressBitmap(targetBitmap)
-
-            // Capture only the changed rectangle after commit. This preserves exact
-            // pixels for pencil and eraser while keeping PNG compression off the UI thread.
+            // Keep the exact pixels before and after the committed stroke.
+            // The two small regions are compressed asynchronously off the UI thread.
             val bounds = inProgressBounds
             if (bounds != null) {
                 val left = kotlin.math.floor(bounds.left).toInt().coerceIn(0, targetBitmap.width)
@@ -5195,11 +5495,29 @@ class DrawingView(context: android.content.Context) : View(context) {
                 val right = kotlin.math.ceil(bounds.right).toInt().coerceIn(0, targetBitmap.width)
                 val bottom = kotlin.math.ceil(bounds.bottom).toInt().coerceIn(0, targetBitmap.height)
                 if (right > left && bottom > top) {
-                    val patchBitmap = Bitmap.createBitmap(targetBitmap, left, top, right - left, bottom - top)
-                    onStrokeCommitted?.invoke(
-                        StrokeHistoryPatch(frame, targetBackground, left, top, patchBitmap)
-                    )
+                    val patchWidth = right - left
+                    val patchHeight = bottom - top
+                    val beforeBitmap = Bitmap.createBitmap(targetBitmap, left, top, patchWidth, patchHeight)
+                    try {
+                        commitInProgressBitmap(targetBitmap)
+                        val afterBitmap = Bitmap.createBitmap(targetBitmap, left, top, patchWidth, patchHeight)
+                        val historyPatch = StrokeHistoryPatch(
+                            frame, targetBackground, left, top, beforeBitmap, afterBitmap
+                        )
+                        val callback = onStrokeCommitted
+                        if (callback != null) callback(historyPatch) else {
+                            beforeBitmap.recycle()
+                            afterBitmap.recycle()
+                        }
+                    } catch (error: Exception) {
+                        if (!beforeBitmap.isRecycled) beforeBitmap.recycle()
+                        throw error
+                    }
+                } else {
+                    commitInProgressBitmap(targetBitmap)
                 }
+            } else {
+                commitInProgressBitmap(targetBitmap)
             }
             clearInProgressDirtyRegion()
             frames.remove(frame)
@@ -5213,6 +5531,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (playbackPreviewActive) return true
         val actionIndex = event.actionIndex.coerceIn(0, event.pointerCount - 1)
         val actionTool = event.getToolType(actionIndex)
         // Never assume pointer index 0 is the S Pen. Android can reorder pointer indices
@@ -5454,6 +5773,36 @@ class DrawingView(context: android.content.Context) : View(context) {
         return true
     }
 
+    private fun applyStoredPatchImage(patch: StoredStrokeHistoryPatch, file: File) {
+        val target = if (patch.background) {
+            backgroundBitmapFor(patch.frame, createIfMissing = true)!!
+        } else {
+            bitmapFor(patch.frame)
+        }
+        val image = BitmapFactory.decodeFile(file.absolutePath)
+            ?: throw IllegalStateException("No se pudo recuperar un trazo del historial")
+        val paint = Paint().apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+        }
+        try {
+            Canvas(target).drawBitmap(image, patch.left.toFloat(), patch.top.toFloat(), paint)
+        } finally {
+            paint.xfermode = null
+            image.recycle()
+        }
+    }
+
+    fun applyHistoryPatch(patch: StoredStrokeHistoryPatch, useAfter: Boolean) {
+        applyStoredPatchImage(patch, if (useAfter) patch.afterFile else patch.beforeFile)
+        if (patch.background) {
+            if (patch.frame != frame) spillBackgroundFrameBitmap(patch.frame)
+        } else if (patch.frame != frame) {
+            spillFrameBitmap(patch.frame)
+        }
+        invalidatePlaybackPreview(patch.frame)
+        invalidate()
+    }
+
     fun applyHistoryPatches(patches: List<StoredStrokeHistoryPatch>) {
         if (patches.isEmpty()) return
         patches.groupBy { it.frame }.forEach { (frameIndex, framePatches) ->
@@ -5464,7 +5813,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                     xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
                 }
                 foregroundPatches.forEach { patch ->
-                    val image = BitmapFactory.decodeFile(patch.file.absolutePath)
+                    val image = BitmapFactory.decodeFile(patch.afterFile.absolutePath)
                         ?: throw IllegalStateException("No se pudo recuperar un trazo del historial")
                     try {
                         Canvas(target).drawBitmap(image, patch.left.toFloat(), patch.top.toFloat(), paint)
@@ -5483,7 +5832,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                     xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
                 }
                 backgroundPatches.forEach { patch ->
-                    val image = BitmapFactory.decodeFile(patch.file.absolutePath)
+                    val image = BitmapFactory.decodeFile(patch.afterFile.absolutePath)
                         ?: throw IllegalStateException("No se pudo recuperar un trazo del historial de fondo")
                     try {
                         Canvas(target).drawBitmap(image, patch.left.toFloat(), patch.top.toFloat(), paint)
@@ -5495,6 +5844,7 @@ class DrawingView(context: android.content.Context) : View(context) {
                 if (frameIndex != frame) spillBackgroundFrameBitmap(frameIndex)
             }
         }
+        clearPlaybackPreviews()
         invalidate()
     }
 
