@@ -4069,6 +4069,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         playbackPreviewActive = false
         playbackPreviewFrame = -1
         playbackPreviewBitmap = null
+        // Pending decodes may race with the selected frame being loaded into the
+        // editable cache. Ignore those results so an incomplete image is never cached.
+        previewGeneration++
+        previewJobs.clear()
         setFrame(index)
         invalidate()
     }
