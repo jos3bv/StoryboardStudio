@@ -413,6 +413,7 @@ class MainActivity : Activity() {
             }
             val bounded = position.coerceAtMost(totalDuration())
             timelineView.setPlayhead(bounded)
+            timelineView.followPlayheadDuringPlayback()
             val frame = if (bounded >= totalDuration()) frameDurations.lastIndex else frameAtTime(bounded)
             if (frame != currentFrame && frame in frameDurations.indices) {
                 currentFrame = frame
