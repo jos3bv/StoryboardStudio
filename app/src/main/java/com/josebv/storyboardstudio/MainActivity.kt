@@ -3212,6 +3212,7 @@ class TimelineView(context: android.content.Context) : View(context) {
         }
 
     private var staticTimelineBitmap: Bitmap? = null
+    private var staticTimelineStartX = 0
     private var audioPlaceholderBitmap: Bitmap? = null
     private var durations = listOf(3000)
     private var selected = 0
@@ -3283,6 +3284,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     private fun invalidateStaticTimeline() {
         staticTimelineBitmap?.let { if (!it.isRecycled) it.recycle() }
         staticTimelineBitmap = null
+        staticTimelineStartX = 0
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -3290,19 +3292,44 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidateStaticTimeline()
     }
 
+    override fun onDetachedFromWindow() {
+        invalidateStaticTimeline()
+        audioPlaceholderBitmap?.let { if (!it.isRecycled) it.recycle() }
+        audioPlaceholderBitmap = null
+        super.onDetachedFromWindow()
+    }
+
     private fun ensureStaticTimeline() {
         if (width <= 0 || height <= 0) return
+        val scroll = parent as? HorizontalScrollView
+        val viewportWidth = (scroll?.width ?: width).coerceAtLeast(1)
+        val scrollX = (scroll?.scrollX ?: 0).coerceAtLeast(0)
         val existing = staticTimelineBitmap
+        val cachedEnd = staticTimelineStartX + (existing?.width ?: 0)
         if (existing != null && !existing.isRecycled &&
-            existing.width == width && existing.height == height) return
+            scrollX >= staticTimelineStartX &&
+            scrollX + viewportWidth <= cachedEnd) return
+
         invalidateStaticTimeline()
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        // Cache only a small region ahead of the visible viewport. A full-length
+        // timeline can be tens of thousands of pixels wide on long projects.
+        val remainingWidth = (width - scrollX).coerceAtLeast(1)
+        val tileWidth = min(viewportWidth * 2, remainingWidth).coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(tileWidth, height, Bitmap.Config.ARGB_8888)
         val staticCanvas = Canvas(bitmap)
         staticCanvas.drawColor(Color.rgb(25, 29, 35))
+        staticCanvas.save()
+        staticCanvas.translate(-scrollX.toFloat(), 0f)
+        staticCanvas.clipRect(
+            scrollX.toFloat(), 0f,
+            (scrollX + tileWidth).toFloat(), height.toFloat()
+        )
         drawRuler(staticCanvas)
         drawCards(staticCanvas)
         drawWaveform(staticCanvas)
+        staticCanvas.restore()
         staticTimelineBitmap = bitmap
+        staticTimelineStartX = scrollX
     }
 
     fun setData(
@@ -3396,7 +3423,7 @@ class TimelineView(context: android.content.Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         ensureStaticTimeline()
-        staticTimelineBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        staticTimelineBitmap?.let { canvas.drawBitmap(it, staticTimelineStartX.toFloat(), 0f, null) }
         drawWaveformStatus(canvas)
         drawPlayhead(canvas)
     }
