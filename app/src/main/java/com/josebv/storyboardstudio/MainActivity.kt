@@ -3263,25 +3263,7 @@ class TimelineView(context: android.content.Context) : View(context) {
         }
 
         override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val oldScale = pixelsPerSecond
-            val newScale = (oldScale * detector.scaleFactor).coerceIn(22f, 420f)
-            if (newScale != oldScale) {
-                val scroll = this@TimelineView.parent as? HorizontalScrollView
-                val focusX = detector.focusX
-                val oldScrollX = scroll?.scrollX ?: 0
-                val screenFocusX = focusX - oldScrollX
-                val timeUnderFingers = (focusX - leftMargin) / oldScale
-                pixelsPerSecond = newScale
-                this@TimelineView.requestLayout()
-                this@TimelineView.invalidate()
-                if (scroll != null) {
-                    this@TimelineView.post {
-                        val newScrollX = (leftMargin + timeUnderFingers * pixelsPerSecond - screenFocusX)
-                            .toInt().coerceAtLeast(0)
-                        scroll.scrollTo(newScrollX, 0)
-                    }
-                }
-            }
+            applyZoomScale(pixelsPerSecond * detector.scaleFactor)
             return true
         }
 
@@ -3394,11 +3376,55 @@ class TimelineView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
-    fun changeZoom(factor: Float): Int {
-        pixelsPerSecond = (pixelsPerSecond * factor).coerceIn(8f, 420f)
+    private fun applyZoomScale(requestedScale: Float) {
+        val nextScale = requestedScale.coerceIn(8f, 420f)
+        val oldScale = pixelsPerSecond
+        if (abs(nextScale - oldScale) < 0.001f) return
+
+        val scroll = parent as? HorizontalScrollView
+        val oldScrollX = scroll?.scrollX ?: 0
+        // Keep the playhead at the same screen coordinate while the timeline scale changes.
+        val playheadScreenX = leftMargin + playheadMs / 1000f * oldScale - oldScrollX
+
+        pixelsPerSecond = nextScale
         invalidateStaticTimeline()
         requestLayout()
         invalidate()
+
+        if (scroll != null) {
+            post {
+                val newPlayheadContentX = leftMargin + playheadMs / 1000f * pixelsPerSecond
+                val targetScrollX = (newPlayheadContentX - playheadScreenX).roundToInt()
+                scroll.scrollTo(targetScrollX.coerceAtLeast(0), 0)
+                notifyViewportChanged()
+            }
+        }
+    }
+
+    fun followPlayheadDuringPlayback() {
+        val scroll = parent as? HorizontalScrollView ?: return
+        val viewportWidth = scroll.width
+        if (viewportWidth <= 0) return
+
+        val headContentX = leftMargin + playheadMs / 1000f * pixelsPerSecond
+        val headScreenX = headContentX - scroll.scrollX
+        val edgeInset = min(max(24f * density, viewportWidth * 0.08f), viewportWidth / 3f)
+        val rightLimit = viewportWidth - edgeInset
+
+        // Advance by almost one viewport when the head reaches the right edge,
+        // placing it near the left edge so it can travel across the timeline again.
+        if (headScreenX >= rightLimit || (playheadMs > 0 && headScreenX < edgeInset)) {
+            val maxScrollX = (width - viewportWidth).coerceAtLeast(0)
+            val targetScrollX = (headContentX - edgeInset).roundToInt().coerceIn(0, maxScrollX)
+            if (targetScrollX != scroll.scrollX) {
+                scroll.scrollTo(targetScrollX, 0)
+                notifyViewportChanged()
+            }
+        }
+    }
+
+    fun changeZoom(factor: Float): Int {
+        applyZoomScale(pixelsPerSecond * factor)
         return (((pixelsPerSecond - 8f) / (420f - 8f)) * 100f).toInt().coerceIn(0, 100)
     }
 
@@ -3416,18 +3442,12 @@ class TimelineView(context: android.content.Context) : View(context) {
     }
 
     fun setZoomProgress(progress: Int) {
-        pixelsPerSecond = (8f + (progress.coerceIn(0, 100) / 100f) * (420f - 8f))
-            .coerceIn(8f, 420f)
-        invalidateStaticTimeline()
-        requestLayout()
-        invalidate()
+        val nextScale = 8f + (progress.coerceIn(0, 100) / 100f) * (420f - 8f)
+        applyZoomScale(nextScale)
     }
 
     fun setZoomLevel(level: Float) {
-        pixelsPerSecond = (85f * level).coerceIn(8f, 420f)
-        invalidateStaticTimeline()
-        requestLayout()
-        invalidate()
+        applyZoomScale(85f * level)
     }
 
     fun centerOnPlayhead() {
