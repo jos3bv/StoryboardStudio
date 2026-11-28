@@ -417,8 +417,10 @@ class MainActivity : Activity() {
             if (frame != currentFrame && frame in frameDurations.indices) {
                 currentFrame = frame
                 drawing.setPlaybackPreviewFrame(frame, playbackPrefetchIndices(frame))
+                updatePaperColorIndicator()
                 updateFrameStatus()
                 timelineView.setSelectedFrame(frame)
+                timelineView.notifyViewportChanged()
             }
             if (sequencePlaying && bounded >= totalDuration()) {
                 stopPlayback()
@@ -969,7 +971,7 @@ class MainActivity : Activity() {
         addCanvasIconButton(canvasButtons, "ic_undo", "Deshacer") { undoGlobal() }
         addCanvasIconButton(canvasButtons, "ic_redo", "Rehacer") { redoGlobal() }
         canvasArea.addView(canvasButtons, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.LEFT).apply {
-            leftMargin = dp(12)
+            leftMargin = dp(30)
             topMargin = dp(12)
         })
         val selectionActions = LinearLayout(this).apply {
@@ -977,8 +979,15 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
-        val acceptSelection = addCompactButton(selectionActions, "Aceptar", "Confirmar transformación") {
+        val cutSelection = addCompactButton(selectionActions, "Cortar", "Aplicar corte y mover la selección") {
             drawing.confirmSelection()
+            selectionActionsView?.visibility = View.GONE
+            updateModeToolAlpha(lassoActive = false)
+            recordHistory()
+            scheduleAutosave()
+        }
+        val copySelection = addCompactButton(selectionActions, "Copiar", "Conservar el original y colocar una copia") {
+            drawing.confirmSelection(copySource = true)
             selectionActionsView?.visibility = View.GONE
             updateModeToolAlpha(lassoActive = false)
             recordHistory()
@@ -990,10 +999,10 @@ class MainActivity : Activity() {
             updateModeToolAlpha(lassoActive = false)
         }
         selectionActionsView = selectionActions
-        acceptSelection.layoutParams = acceptSelection.layoutParams.apply { width = dp(112); height = dp(48) }
-        cancelSelection.layoutParams = cancelSelection.layoutParams.apply { width = dp(112); height = dp(48) }
-        acceptSelection.textSize = 14f
-        cancelSelection.textSize = 14f
+        listOf(cutSelection, copySelection, cancelSelection).forEach { button ->
+            button.layoutParams = button.layoutParams.apply { width = dp(92); height = dp(48) }
+            button.textSize = 13f
+        }
         canvasArea.addView(selectionActions, FrameLayout.LayoutParams(-2, dp(50), Gravity.TOP or Gravity.RIGHT).apply {
             rightMargin = dp(12)
             topMargin = dp(12)
@@ -1185,8 +1194,10 @@ class MainActivity : Activity() {
                 if (idx != currentFrame) {
                     currentFrame = idx
                     drawing.setFrame(currentFrame)
+                    updatePaperColorIndicator()
                     updateFrameStatus()
                     timelineView.setSelectedFrame(currentFrame)
+                    timelineView.notifyViewportChanged()
                 }
                 timelineView.setPlayhead(position)
             }
@@ -1202,6 +1213,9 @@ class MainActivity : Activity() {
         timelineScroll.addView(timelineView, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
+        timelineScroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            timelineView.notifyViewportChanged()
+        }
         val timelineContent = FrameLayout(this)
         timelineContent.addView(timelineScroll, FrameLayout.LayoutParams(-1, -1))
         // Reemplazar audio: mismo tamaño y presentación que el gráfico "Cargar audio",
@@ -1505,7 +1519,7 @@ class MainActivity : Activity() {
             .create()
         dialog.setOnShowListener {
             dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                drawing.setCanvasPaperColor(selectedColor)
+                drawing.setCanvasPaperColor(selectedColor, currentFrame)
                 updatePaperColorIndicator()
                 scheduleAutosave()
                 dialog.dismiss()
@@ -1629,11 +1643,13 @@ class MainActivity : Activity() {
         if (frameDurations.isEmpty()) return
         currentFrame = index.coerceIn(0, frameDurations.lastIndex)
         drawing.setFrame(currentFrame)
+        updatePaperColorIndicator()
         if (movePlayhead) {
             stopPlayback()
             val start = frameStartTime(currentFrame)
             mediaPlayer?.seekTo(start.coerceIn(0, max(0, audioDurationMs)))
             timelineView.setPlayhead(start)
+            timelineView.notifyViewportChanged()
         }
         updateFrameStatus()
         updateTimeline()
@@ -2602,6 +2618,7 @@ class MainActivity : Activity() {
         mediaPlayer?.seekTo(bounded.coerceAtMost(audioDurationMs))
         timelineView.setPlayhead(bounded)
         timelineView.centerOnPlayhead()
+        timelineView.notifyViewportChanged()
     }
 
     private fun scheduleAutosave() {
@@ -3416,6 +3433,18 @@ class TimelineView(context: android.content.Context) : View(context) {
         val parent = parent as? HorizontalScrollView ?: return
         val x = leftMargin + playheadMs / 1000f * pixelsPerSecond
         parent.smoothScrollTo((x - parent.width / 2f).toInt().coerceAtLeast(0), 0)
+        notifyViewportChanged()
+    }
+
+    fun notifyViewportChanged() {
+        val scroll = parent as? HorizontalScrollView ?: return
+        val left = scroll.scrollX.coerceAtLeast(0)
+        val right = left + scroll.width.coerceAtLeast(1)
+        val cachedRight = staticTimelineStartX + (staticTimelineBitmap?.width ?: 0)
+        if (staticTimelineBitmap == null || left < staticTimelineStartX || right > cachedRight) {
+            invalidateStaticTimeline()
+        }
+        postInvalidateOnAnimation()
     }
 
     private fun contentDurationMs(): Int = max(durations.sum(), audioDurationMs)
@@ -3489,12 +3518,23 @@ class TimelineView(context: android.content.Context) : View(context) {
         val x = leftMargin + elapsed / 1000f * pixelsPerSecond
         val w = max(55f * density, duration / 1000f * pixelsPerSecond)
         val rect = RectF(x, cardsTop, x + w, cardsTop + cardHeight)
-        paint.color = Color.rgb(20, 137, 195)
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 3f * density
-        canvas.drawRoundRect(rect, 2f * density, 2f * density, paint)
         paint.style = Paint.Style.FILL
-        canvas.drawRect(x, cardsTop, x + w, cardsTop + 3f * density, paint)
+        paint.color = Color.rgb(20, 137, 195)
+        canvas.drawRect(rect, paint)
+        paint.color = Color.WHITE
+        paint.textSize = 12f * density
+        paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        canvas.drawText("${projectLabel}_${selected + 1}", x + 7f * density, cardsTop + 17f * density, paint)
+        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        val durationText = String.format(java.util.Locale.US, "%.2fs", duration / 1000f)
+        val textWidth = paint.measureText(durationText)
+        canvas.drawText(durationText, x + w - textWidth - (handleWidth + 8f * density),
+            cardsTop + cardHeight - 6f * density, paint)
+        paint.color = Color.WHITE
+        canvas.drawRect(x + w - handleWidth, cardsTop, x + w, cardsTop + cardHeight, paint)
+        paint.color = Color.rgb(55, 55, 55)
+        canvas.drawRect(x + w - handleWidth / 2f - density, cardsTop + cardHeight * 0.28f,
+            x + w - handleWidth / 2f + density, cardsTop + cardHeight * 0.72f, paint)
     }
 
     private fun drawWaveform(canvas: Canvas) {
@@ -3982,7 +4022,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             foregroundFile = if (foregroundMemory == null) frameBitmapFiles[index] else null,
             backgroundScaled = scaledPlaybackLayer(backgroundMemory),
             backgroundFile = if (backgroundMemory == null) backgroundFrameBitmapFiles[index] else null,
-            paperColor = paperColor,
+            paperColor = canvasPaperColor(index),
             note = notes[index]?.firstOrNull(),
             noteColor = noteColors[index] ?: Color.RED
         )
@@ -4384,6 +4424,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private var eyedropperActive = false
     private var eyedropperTouchInProgress = false
     private var paperColor = Color.WHITE
+    private val framePaperColors = mutableMapOf<Int, Int>()
 
     // Editable lasso selection: original strokes remain vector-like point/pressure data.
     private var lassoEnabled = false
@@ -4606,6 +4647,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         backgroundPencil = false
         backgroundEraser = false
         paperColor = Color.WHITE
+        framePaperColors.clear()
         eyedropperActive = false
         eyedropperTouchInProgress = false
         inProgressBackground = false
@@ -4739,10 +4781,11 @@ class DrawingView(context: android.content.Context) : View(context) {
         invalidate()
     }
     fun currentColor(): Int = activeSettings().color
-    fun canvasPaperColor(): Int = paperColor
-    fun setCanvasPaperColor(value: Int) {
-        if (paperColor == value) return
-        paperColor = value
+    fun canvasPaperColor(index: Int = frame): Int = framePaperColors[index] ?: paperColor
+    fun setCanvasPaperColor(value: Int, index: Int = frame) {
+        if (canvasPaperColor(index) == value) return
+        if (value == paperColor) framePaperColors.remove(index) else framePaperColors[index] = value
+        invalidatePlaybackPreview(index)
         invalidate()
         onChanged?.invoke()
         onHistoryAction?.invoke()
@@ -4874,6 +4917,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         val sourceStrokes = frames[source]?.let { cloneStrokes(it) }
         val sourceNotes = notes[source]?.take(1)?.toMutableList()
         val sourceNoteColor = noteColors[source]
+        val sourcePaperColor = canvasPaperColor(source)
         shiftFramesForInsert(target)
         if (sourceStrokes != null) frames[target] = sourceStrokes
         sourceBitmap?.let { frameBitmaps[target] = it }
@@ -4881,6 +4925,7 @@ class DrawingView(context: android.content.Context) : View(context) {
         sourceBackgroundFile?.let { backgroundFrameBitmapFiles[target] = it }
         if (sourceNotes != null) notes[target] = sourceNotes
         sourceNoteColor?.let { noteColors[target] = it }
+        if (sourcePaperColor != paperColor) framePaperColors[target] = sourcePaperColor
         importedImages[source]?.let { importedImages[target] = it.copy(it.config ?: Bitmap.Config.ARGB_8888, true) }
     }
 
@@ -4913,6 +4958,10 @@ class DrawingView(context: android.content.Context) : View(context) {
         noteColors.forEach { (key, value) -> shiftedNoteColors[if (key >= at) key + 1 else key] = value }
         noteColors.clear()
         noteColors.putAll(shiftedNoteColors)
+        val shiftedPaperColors = mutableMapOf<Int, Int>()
+        framePaperColors.forEach { (key, value) -> shiftedPaperColors[if (key >= at) key + 1 else key] = value }
+        framePaperColors.clear()
+        framePaperColors.putAll(shiftedPaperColors)
     }
 
     fun removeFrame(index: Int) {
@@ -4937,12 +4986,18 @@ class DrawingView(context: android.content.Context) : View(context) {
         noteColors.forEach { (key, value) -> if (key != index) shiftedNoteColors[if (key > index) key - 1 else key] = value }
         noteColors.clear()
         noteColors.putAll(shiftedNoteColors)
+        val shiftedPaperColors = mutableMapOf<Int, Int>()
+        framePaperColors.forEach { (key, value) ->
+            if (key != index) shiftedPaperColors[if (key > index) key - 1 else key] = value
+        }
+        framePaperColors.clear()
+        framePaperColors.putAll(shiftedPaperColors)
         invalidate()
     }
 
     fun moveFrame(from: Int, to: Int) {
         if (from == to) return
-        val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys + notes.keys + importedImages.keys).toSet()
+        val allKeys = (frames.keys + frameBitmaps.keys + frameBitmapFiles.keys + backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys + notes.keys + importedImages.keys + framePaperColors.keys).toSet()
         val newFrames = mutableMapOf<Int, MutableList<Stroke>>()
         val newNotes = mutableMapOf<Int, MutableList<String>>()
         allKeys.forEach { old ->
@@ -4978,6 +5033,18 @@ class DrawingView(context: android.content.Context) : View(context) {
             movedNoteColors[new] = value
         }
         noteColors.clear(); noteColors.putAll(movedNoteColors)
+        val movedPaperColors = mutableMapOf<Int, Int>()
+        framePaperColors.forEach { (old, value) ->
+            val new = when {
+                old == from -> to
+                from < to && old in (from + 1)..to -> old - 1
+                from > to && old in to until from -> old + 1
+                else -> old
+            }
+            movedPaperColors[new] = value
+        }
+        framePaperColors.clear()
+        framePaperColors.putAll(movedPaperColors)
         invalidate()
     }
 
@@ -5014,7 +5081,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             return
         }
         // The editable bitmap stays transparent; the paper color is composited underneath.
-        canvas.drawRect(boardBounds, Paint().apply { color = paperColor; style = Paint.Style.FILL })
+        canvas.drawRect(boardBounds, Paint().apply { color = canvasPaperColor(frame); style = Paint.Style.FILL })
         // One RGBA bitmap is the complete artwork for this frame; transparency is preserved.
         val backgroundBitmap = backgroundBitmapFor(frame, createIfMissing = false)
         val unifiedBitmap = bitmapFor(frame)
@@ -5129,11 +5196,18 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun hasSelection(): Boolean = selectedPixels != null || selectedStrokes.isNotEmpty()
 
-    fun confirmSelection() {
+    fun confirmSelection(copySource: Boolean = false) {
         val pixels = selectedPixels
         if (pixels != null) {
             val target = bitmapFor(frame)
             val c = Canvas(target)
+            selectionOriginalBitmap?.let { original ->
+                if (copySource) {
+                    val sourcePaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
+                    c.drawBitmap(original, selectionPixelBounds.left, selectionPixelBounds.top, sourcePaint)
+                    sourcePaint.xfermode = null
+                }
+            }
             c.save()
             c.translate(selectionTranslateX, selectionTranslateY)
             c.rotate(selectionRotation, selectionCenterX, selectionCenterY)
@@ -5191,9 +5265,19 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun cancelSelection() {
         selectedPixels?.let { pixels ->
-            val original = bitmapFor(frame)
-            Canvas(original).drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.FILTER_BITMAP_FLAG))
-            pixels.recycle(); selectedPixels = null
+            val target = bitmapFor(frame)
+            val original = selectionOriginalBitmap
+            if (original != null) {
+                val restorePaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
+                Canvas(target).drawBitmap(original, selectionPixelBounds.left, selectionPixelBounds.top, restorePaint)
+                restorePaint.xfermode = null
+                original.recycle()
+                selectionOriginalBitmap = null
+            } else {
+                Canvas(target).drawBitmap(pixels, selectionPixelBounds.left, selectionPixelBounds.top, Paint(Paint.FILTER_BITMAP_FLAG))
+            }
+            pixels.recycle()
+            selectedPixels = null
         }
         selectionOriginalBitmap?.recycle(); selectionOriginalBitmap = null
         resetPixelSelectionTransform()
@@ -5267,6 +5351,8 @@ class DrawingView(context: android.content.Context) : View(context) {
         if (selection.width == 0 || selection.height == 0 || !selectionHasPixels(selection)) {
             selection.recycle(); lassoPoints.clear(); releaseInProgressSurface(); invalidate(); return
         }
+        selectionOriginalBitmap?.recycle()
+        selectionOriginalBitmap = Bitmap.createBitmap(source, left, top, right - left, bottom - top)
         val eraseCanvas = Canvas(source)
         val clearPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
         eraseCanvas.save()
@@ -5917,10 +6003,11 @@ class DrawingView(context: android.content.Context) : View(context) {
         root.put("paperColor", paperColor)
         val frameArray = JSONArray()
         val indices = (frameBitmaps.keys + frameBitmapFiles.keys + frames.keys + notes.keys + importedImages.keys +
-            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys).toSet().sorted()
+            backgroundFrameBitmaps.keys + backgroundFrameBitmapFiles.keys + framePaperColors.keys).toSet().sorted()
         indices.forEach { index ->
             val frameObject = JSONObject()
             frameObject.put("index", index)
+            frameObject.put("paperColor", canvasPaperColor(index))
             bakeLegacyFrame(index)
 
             if (includeBitmapData) {
@@ -6066,10 +6153,12 @@ class DrawingView(context: android.content.Context) : View(context) {
         pressureSensitivity = root.optBoolean("pressureSensitivity", true)
         root.optJSONObject("toolSettings")?.let { restoreToolSettings(it) }
         paperColor = root.optInt("paperColor", Color.WHITE)
+        framePaperColors.clear()
         val array = root.optJSONArray("frames") ?: JSONArray()
         for (i in 0 until array.length()) {
             val frameObject = array.optJSONObject(i) ?: continue
             val index = frameObject.optInt("index", i)
+            if (frameObject.has("paperColor")) framePaperColors[index] = frameObject.optInt("paperColor", paperColor)
             val strokeArray = frameObject.optJSONArray("strokes") ?: JSONArray()
             val loadedStrokes = mutableListOf<Stroke>()
             for (j in 0 until strokeArray.length()) {
@@ -6187,7 +6276,7 @@ class DrawingView(context: android.content.Context) : View(context) {
 
     fun drawFrameToCanvas(index: Int, canvas: Canvas) {
         bakeLegacyFrame(index)
-        canvas.drawRect(0f, 0f, 1920f, 1080f, Paint().apply { color = paperColor; style = Paint.Style.FILL })
+        canvas.drawRect(0f, 0f, 1920f, 1080f, Paint().apply { color = canvasPaperColor(index); style = Paint.Style.FILL })
         backgroundBitmapFor(index, createIfMissing = false)?.let {
             canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
         }
@@ -6198,12 +6287,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             spillFrameBitmap(index)
             bitmapFor(frame)
         }
-        notes[index]?.firstOrNull()?.let {
-            textPaint.textSize = 34f
-            textPaint.color = Color.RED
-            canvas.drawText(it, 24f, 1030f, textPaint)
-            textPaint.color = Color.DKGRAY
-        }
+        drawNote(canvas, index)
     }
 
     fun exportCurrent(output: OutputStream) {
@@ -6225,7 +6309,7 @@ class DrawingView(context: android.content.Context) : View(context) {
     private fun renderFrame(index: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(paperColor)
+        canvas.drawColor(canvasPaperColor(index))
         bakeLegacyFrame(index)
         backgroundBitmapFor(index, createIfMissing = false)?.let {
             canvas.drawBitmap(it, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
@@ -6237,12 +6321,7 @@ class DrawingView(context: android.content.Context) : View(context) {
             spillFrameBitmap(index)
             bitmapFor(frame)
         }
-        notes[index]?.firstOrNull()?.let {
-            textPaint.textSize = 34f
-            textPaint.color = Color.RED
-            canvas.drawText(it, 24f, 1030f, textPaint)
-            textPaint.color = Color.DKGRAY
-        }
+        drawNote(canvas, index)
         return bitmap
     }
 }
